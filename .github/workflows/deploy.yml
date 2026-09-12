@@ -1,0 +1,92 @@
+name: Deploy to GitHub Pages
+
+# 构建并发布到 GitHub Pages。
+# 关键点（与“桌面端自动更新”直接相关）：
+#   1. 必须在 Windows 上完整构建 Tauri（产出真实安装包 .exe），
+#      否则 pages 上只有前端、没有安装包，旧客户端永远收不到完整更新。
+#   2. 构建前把 GitHub Pages 地址写进根 version.json 的 updateUrl，
+#      这样打进安装包的 dist-app/version.json（由 write-version 桥接）也会带上更新源，
+#      已安装客户端才能从 Pages 拉到新版本（否则它只会拿自己 127.0.0.1 的本地清单）。
+#   3. 启动器 .ps1/.bat 强制 UTF-8 BOM + CRLF，避免 Windows PowerShell 5.1 按 GBK 解码报错。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      # PS5.1 编码陷阱：确保启动器带 BOM + CRLF（checkout 可能把换行归一化掉）
+      - name: Ensure launcher scripts are UTF-8 BOM + CRLF
+        run: node scripts/fix-ps-encoding.mjs assets-templates/启动.ps1 assets-templates/启动.bat
+
+      # 把 Pages 地址注入根 version.json（发布时随清单下发给所有客户端）
+      - name: Inject GitHub Pages update URL
+        shell: bash
+        run: |
+          repo_lc=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          url="https://${{ github.repository_owner }}.github.io/${repo_lc}/"
+          node -e 'const fs=require("fs");const p="version.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.updateUrl=process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");' "$url"
+          echo "updateUrl -> $url"
+
+      - name: Install npm deps (@tauri-apps/cli)
+        run: npm install
+
+      - name: Build Tauri app (cargo + NSIS/MSI bundle)
+        run: node scripts/tauri-build.mjs
+
+      - name: Build release package (version.json + installer + web-update)
+        run: node scripts/build-release.mjs
+
+      - name: Sync dist (final dist/version.json with windows + updateUrl)
+        run: npm run sync:dist
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

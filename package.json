@@ -1,0 +1,33 @@
+{
+  "name": "promptforge",
+  "version": "0.2.0",
+  "description": "PromptForge 提示词工坊 - 把你的想法交给 AI，生成结构化高质量提示词",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "sync:dist": "node scripts/sync-dist.mjs && node scripts/write-version.mjs",
+    "bump": "node scripts/bump-version.mjs",
+    "check:dist": "node scripts/check-dist.mjs",
+    "check:download": "node .workbuddy/check-download-ux.mjs",
+    "check:update": "node .workbuddy/check-update-chain.mjs",
+    "check:launcher": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/_selftest-launcher.ps1",
+    "check:psencoding": "node scripts/fix-ps-encoding.mjs --check assets-templates/启动.ps1 assets-templates/启动.bat",
+    "check:models": "node .workbuddy/check-model-metadata.mjs && node .workbuddy/check-model-derivation.mjs",
+    "check:xss": "node .workbuddy/check-xss-and-styles.mjs",
+    "check:storage": "node .workbuddy/check-settings-cache.mjs",
+    "check:all:runner": "node .workbuddy/run-all-checks.mjs",
+    "check:all": "node scripts/check-dist.mjs && node .workbuddy/check-frameworks.mjs && node .workbuddy/check-styles.mjs && node .workbuddy/check-ui-wiring.mjs && node .workbuddy/check-download-ux.mjs && node .workbuddy/check-update-chain.mjs && node .workbuddy/check-model-metadata.mjs && node .workbuddy/check-model-derivation.mjs && node .workbuddy/check-settings-cache.mjs && node .workbuddy/check-xss-and-styles.mjs && node scripts/fix-ps-encoding.mjs --check assets-templates/启动.ps1 assets-templates/启动.bat && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/_selftest-launcher.ps1",
+    "verify:update": "node scripts/verify-update-chain.mjs",
+    "release": "npm run check:dist && node scripts/tauri-build.mjs && node scripts/build-release.mjs && npm run sync:dist && npm run verify:update",
+    "release:pack": "node scripts/build-release.mjs && npm run sync:dist && npm run verify:update",
+    "release:prune": "node scripts/build-release.mjs --prune",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "npm run check:dist && node scripts/tauri-build.mjs"
+  },
+  "keywords": ["prompt-engineering", "ai", "tauri", "pwa"],
+  "author": "PromptForge",
+  "license": "ISC",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

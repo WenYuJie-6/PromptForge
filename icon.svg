@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#08090d"/>
+  <rect x="18" y="18" width="476" height="476" rx="82" fill="none" stroke="#4ade80" stroke-opacity=".4" stroke-width="10"/>
+  <text x="256" y="322" font-family="Georgia, 'Times New Roman', serif" font-size="230" font-weight="700" fill="#4ade80" text-anchor="middle">P</text>
+  <text x="256" y="408" font-family="Arial, sans-serif" font-size="58" font-weight="600" fill="#e2e0dc" text-anchor="middle" letter-spacing="10">FORGE</text>
+</svg>

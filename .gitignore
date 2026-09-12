@@ -1,0 +1,27 @@
+# ---- 依赖 ----
+node_modules/
+src-tauri/target/
+
+# ---- 构建产物 ----
+# 对外部署（源码 + 安装包 + 热更新包）
+dist/
+# 仅供 tauri build 打进安装包的干净前端
+dist-app/
+release/
+src-tauri/gen/schemas/
+
+# ---- 安装包（根目录保留用于网页端下载，但不进版本控制） ----
+Latest-Setup.exe
+Latest.msi
+
+# ---- 本地工具与临时文件 ----
+.workbuddy/
+*.log
+npm-debug.log*
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

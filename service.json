@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "name": "",
+  "endpoint": "",
+  "model": "",
+  "key": "",
+  "note": "内置在线服务。enabled 改为 true 并填入自建代理地址后，新装客户端无需配置 API 即可联网使用。注意：前端配置里的 key 对任何访客可见，只能填受限的代理令牌，不要填主账号 Key。"
+}

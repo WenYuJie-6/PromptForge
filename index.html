@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromptForge · 提示词工坊</title>
+<meta name="theme-color" content="#08090d">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- 个性化背景氛围层（高斯模糊玻璃态衬底） -->
+<div id="bg-layer" aria-hidden="true"><div class="orb orb-a"></div><div class="orb orb-b"></div></div>
+
+<div id="app">
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="logo">PromptForge</div>
+    <div class="logo-sub">提示词工坊</div>
+    <div id="offline-badge" class="hidden"></div>
+
+    <button class="nav-item active" data-view="new"><span class="nav-icon">✦</span>新建优化</button>
+    <button class="nav-item" data-view="optimize"><span class="nav-icon">⚡</span>提示词优化</button>
+    <button class="nav-item" data-view="templates"><span class="nav-icon">◈</span>模板库</button>
+    <button class="nav-item" data-view="compare"><span class="nav-icon">⇄</span>框架对比</button>
+    <button class="nav-item" data-view="history"><span class="nav-icon">◷</span>历史记录</button>
+    <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span>设置</button>
+    <button class="nav-item" data-view="personalize"><span class="nav-icon">🎨</span>个性化</button>
+    <button class="nav-item" data-view="help"><span class="nav-icon">?</span>帮助与模型使用</button>
+    <button class="nav-item" id="nav-check-update" onclick="doAppUpdate()" title="单击检查并安装更新"><span class="nav-icon">⟳</span>检查更新<span class="update-dot hidden" id="update-dot"></span></button>
+    <button class="nav-item" id="pwa-menu-btn" onclick="showPWAInstallMenu()"><span class="nav-icon">📱</span>安装应用</button>
+    <button class="nav-item" id="download-desktop-btn" onclick="downloadDesktopInstaller()" title="下载 Windows 桌面版安装包"><span class="nav-icon">⬇</span>下载桌面版</button>
+
+    <div class="mode-toggle-wrap">
+      <button class="mode-toggle" id="mode-toggle" onclick="toggleMode()" title="切换日间 / 夜间模式">
+        <span class="mode-knob"></span>
+      </button>
+      <span class="mode-label" id="mode-label">夜间</span>
+    </div>
+
+    <div class="fw-section">
+      <h4>框架选择</h4>
+      <button class="fw-chip active" data-fw="auto">自动</button>
+      <button class="fw-chip" data-fw="costar">CO-STAR</button>
+      <button class="fw-chip" data-fw="create">CREATE</button>
+      <button class="fw-chip" data-fw="broke">BROKE</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main id="main">
+
+    <!-- View: New Optimization -->
+    <div id="view-new" class="view active">
+      <h2 class="view-title">提示词优化</h2>
+      <p class="view-desc">输入你的初步想法，AI 会帮你生成专业的提示词</p>
+
+      <!-- Step 1: Input -->
+      <div id="step-input" class="step-card">
+        <div class="step-label">第一步 · 描述你的想法</div>
+        <textarea class="idea-input" id="user-idea" placeholder="例如：我想让 AI 帮我写一篇关于 AI 教育的小红书笔记，要吸引年轻妈妈群体..."></textarea>
+        <div class="template-tip hidden" id="template-tip"></div>
+        <div class="row">
+          <button class="btn btn-primary" id="btn-start" onclick="startOptimize()">开始优化 →</button>
+          <button class="btn btn-ghost btn-sm" onclick="switchView('optimize')">已有提示词？去精修 ↗</button>
+          <div id="fw-display" class="fw-display">框架：<span id="fw-display-name">自动匹配</span></div>
+        </div>
+      </div>
+
+      <!-- Step 2: Follow-up Questions -->
+      <div id="step-questions" class="step-card hidden">
+        <div class="step-label">第二步 · 补充关键信息</div>
+        <p class="q-note">你的想法很棒，但还需要一些细节来生成更好的提示词：</p>
+        <div id="questions-container"></div>
+        <div class="row-sm">
+          <button class="btn btn-primary" onclick="submitAnswers()">生成优化提示词 →</button>
+          <button class="btn btn-ghost btn-sm" onclick="skipQuestions()">跳过这些问题，直接生成</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Generating -->
+      <div id="step-generating" class="step-card hidden">
+        <div class="loading">
+          <div class="loading-dots"><span></span><span></span><span></span></div>
+          <span class="loading-text" id="loading-text">正在分析并优化你的提示词...</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-stop" onclick="stopGeneration()">■ 停止生成</button>
+      </div>
+
+      <!-- Step 4: Output -->
+      <div id="step-output" class="step-card hidden">
+        <div class="step-label"><span id="output-label-text">优化完成</span><button class="btn btn-secondary btn-sm hidden ml-auto" id="btn-stop-2" onclick="stopGeneration()">■ 停止生成</button></div>
+        <div class="output-area" id="output-area"></div>
+        <div class="output-meta" id="output-meta"></div>
+        <div id="framework-switch" style="display:flex;gap:.4rem;align-items:center;margin-top:.6rem;flex-wrap:wrap"></div>
+        <div class="toolbar">
+          <button class="btn btn-primary btn-sm" onclick="copyOutput()">复制提示词</button>
+          <button class="btn btn-secondary btn-sm" onclick="saveToHistory()">保存到历史</button>
+          <button class="btn btn-secondary btn-sm" onclick="regenerate()">重新生成</button>
+          <button class="btn btn-ghost btn-sm" onclick="resetFlow()">新建</button>
+        </div>
+        <div class="more-tools">
+          <span class="more-tools-label">更多工具</span>
+          <button class="btn btn-ghost btn-sm" onclick="openCompare()">⇄ 框架对比</button>
+          <button class="btn btn-ghost btn-sm" onclick="scoreOutput()">★ 质量评分</button>
+          <button class="btn btn-ghost btn-sm" id="btn-mdview" onclick="toggleMarkdown()">≡ MD渲染</button>
+          <button class="btn btn-ghost btn-sm" onclick="shareLink()">↗ 分享链接</button>
+          <button class="btn btn-ghost btn-sm" onclick="showQR()">▣ 二维码</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportMarkdown()">↓ MD</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportJSON()">↓ JSON</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportPDF()">↓ PDF</button>
+        </div>
+        <div id="score-panel" class="score-panel hidden">
+          <div class="score-head">
+            <span class="score-total" id="score-total">--</span>
+            <span class="score-max">/ 10</span>
+            <span class="score-verdict" id="score-verdict"></span>
+          </div>
+          <div class="score-dims" id="score-dims"></div>
+          <div class="score-sugs" id="score-sugs"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- View: Optimize an existing prompt -->
+    <div id="view-optimize" class="view">
+      <h2 class="view-title">提示词优化</h2>
+      <p class="view-desc">把一条已经写好的提示词粘进来，按「明确任务 · 补充上下文 · 设定参数与约束 · 结构化输出」一键精修，并给出原文 / 优化版对比。支持中英混合，输出语言跟随输入。</p>
+
+      <!-- Input -->
+      <div class="step-card">
+        <div class="step-label">原始提示词</div>
+        <textarea class="idea-input" id="opt-input"
+          placeholder="把你正在用的提示词粘贴到这里，例如：帮我写一篇关于 AI 教育的小红书笔记…"
+          oninput="updateOptDiagnosis()" onkeydown="optInputKeydown(event)"></textarea>
+        <div class="opt-scan" id="opt-scan"></div>
+
+        <div class="row opt-opts">
+          <label class="opt-field">优化引擎
+            <select id="opt-engine" onchange="onOptEngineChange()">
+              <option value="local">本地规则（无需 API）</option>
+              <option value="llm">AI 深度优化（需配置模型）</option>
+            </select>
+          </label>
+          <label class="opt-field">输出语言
+            <select id="opt-lang">
+              <option value="auto">跟随输入（自动识别）</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label class="opt-field" id="opt-style-field">版式风格
+            <select id="opt-style" onchange="onOptStyleChange()">
+              <option value="auto">自动挑选（按内容特征）</option>
+            </select>
+          </label>
+        </div>
+        <div class="opt-style-desc" id="opt-style-desc"></div>
+
+        <div class="row">
+          <button class="btn btn-primary" id="btn-opt-run" onclick="optimizePromptNow()">⚡ 一键优化</button>
+          <button class="btn btn-secondary btn-sm hidden" id="btn-opt-stop" onclick="stopOptimize()">■ 停止</button>
+          <button class="btn btn-ghost btn-sm" onclick="fillOptExample()">填入示例</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearOptimizer()">清空</button>
+          <span class="opt-hint" id="opt-hint"></span>
+        </div>
+      </div>
+
+      <!-- Result -->
+      <div class="step-card hidden" id="opt-result">
+        <div class="step-label">优化报告</div>
+        <div class="opt-report" id="opt-report"></div>
+        <div class="opt-changes" id="opt-changes"></div>
+
+        <div class="opt-viewswitch" id="opt-style-pills-wrap">
+          <span class="opt-pills-label">换一种版式：</span>
+          <span class="opt-style-pills" id="opt-style-pills"></span>
+        </div>
+
+        <div class="opt-viewswitch">
+          <button class="fw-chip active" id="opt-mode-split" onclick="setOptMode('split')">并排对比</button>
+          <button class="fw-chip" id="opt-mode-diff" onclick="setOptMode('diff')">逐行差异</button>
+        </div>
+
+        <div class="compare-grid opt-grid" id="opt-split">
+          <div class="compare-col">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h3>原始版本</h3><span class="cmp-status" id="opt-orig-meta"></span>
+            </div>
+            <div class="output-area cmp-area" id="opt-orig-area"></div>
+          </div>
+          <div class="compare-col">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h3>优化版本</h3><span class="cmp-status done" id="opt-new-meta"></span>
+            </div>
+            <div class="output-area cmp-area" id="opt-new-area"></div>
+          </div>
+        </div>
+        <div class="output-area hidden" id="opt-diff-area"></div>
+
+        <div class="toolbar">
+          <button class="btn btn-primary btn-sm" onclick="copyOptimizedText()">复制优化版</button>
+          <button class="btn btn-secondary btn-sm" onclick="replaceOriginalWithOptimized()">替换为优化版</button>
+          <button class="btn btn-secondary btn-sm" id="btn-opt-undo" onclick="undoReplace()" disabled>还原</button>
+          <button class="btn btn-secondary btn-sm" onclick="sendOptimizedToNew()">送去「新建优化」继续加工</button>
+          <button class="btn btn-ghost btn-sm" onclick="saveOptimizedToHistory()">保存到历史</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- View: Templates -->
+    <div id="view-templates" class="view">
+      <h2 class="view-title">模板库</h2>
+      <p class="view-desc">选择一个模板快速开始，或从中获取灵感</p>
+      <div class="filters-row" id="template-filters"></div>
+      <div class="template-grid" id="template-grid"></div>
+    </div>
+
+    <!-- View: Compare -->
+    <div id="view-compare" class="view">
+      <h2 class="view-title">框架对比</h2>
+      <p class="view-desc">同一个想法，分别用 CO-STAR / CREATE / BROKE 生成，左右对比效果</p>
+      <div class="step-card">
+        <textarea class="idea-input" id="cmp-idea" placeholder="输入你的初步想法..."></textarea>
+        <div class="row">
+          <button class="btn btn-secondary" onclick="generateComparison()" id="btn-compare">三框架对比 →</button>
+          <button class="btn btn-secondary btn-sm" onclick="stopGeneration()">■ 停止生成</button>
+          <span class="cmp-hint">三个框架并行生成，可随时停止</span>
+        </div>
+      </div>
+      <div class="compare-grid" id="compare-grid"></div>
+    </div>
+
+    <!-- View: History -->
+    <div id="view-history" class="view">
+      <h2 class="view-title">历史记录</h2>
+      <p class="view-desc">浏览和管理你之前生成的提示词</p>
+      <div class="history-actions"><button class="btn btn-ghost btn-sm" onclick="clearHistory()">清空全部</button></div>
+      <div id="history-list"></div>
+    </div>
+
+    <!-- View: Settings -->
+    <div id="view-settings" class="view">
+      <h2 class="view-title">设置</h2>
+      <p class="view-desc">配置你的大模型 API 连接</p>
+
+      <div class="setting-group">
+        <label>运行引擎</label>
+        <div class="engine-selection">
+          <label class="engine-option">
+            <input type="radio" name="engine" value="online" checked>
+            <span class="engine-label">在线 API</span>
+            <span class="engine-desc">使用外部 API，响应快速，需要联网</span>
+          </label>
+          <label class="engine-option">
+            <input type="radio" name="engine" value="offline">
+            <span class="engine-label">本地离线</span>
+            <span class="engine-desc">本地运行，保护隐私，无需联网</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>快速预设</label>
+        <div class="api-presets">
+          <button class="preset-chip" onclick="applyPreset('deepseek')">DeepSeek</button>
+          <button class="preset-chip" onclick="applyPreset('moonshot')">Moonshot / Kimi</button>
+          <button class="preset-chip" onclick="applyPreset('qwen')">通义千问</button>
+          <button class="preset-chip" onclick="applyPreset('zhipu')">智谱 GLM</button>
+          <button class="preset-chip" onclick="applyPreset('openai')">OpenAI</button>
+          <button class="preset-chip" onclick="applyPreset('ollama')">Ollama 本地</button>
+        </div>
+      </div>
+
+      <div id="online-settings">
+        <div class="setting-group">
+          <label>API 端点</label>
+          <input type="text" id="set-endpoint" placeholder="https://api.deepseek.com/v1">
+          <div class="hint">OpenAI 兼容格式的 API 地址</div>
+        </div>
+        <div class="setting-group">
+          <label>API 密钥</label>
+          <input type="password" id="set-key" placeholder="sk-...">
+          <div class="hint">本地 Ollama 可留空</div>
+        </div>
+        <div class="setting-group">
+          <label>模型名称</label>
+          <input type="text" id="set-model" placeholder="deepseek-chat">
+        </div>
+        <div class="setting-group">
+          <label>优化语言</label>
+          <select id="set-lang">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+            <option value="auto">跟随输入语言</option>
+          </select>
+        </div>
+
+        <div class="setting-group">
+          <label>追问灵敏度</label>
+          <select id="set-sensitivity">
+            <option value="high">高（缺少 1 个维度即追问）</option>
+            <option value="medium" selected>中（缺少 2 个维度追问）</option>
+            <option value="low">低（缺少 3 个维度才追问）</option>
+          </select>
+          <div class="hint">当你多次跳过追问时，系统会自动降低灵敏度</div>
+        </div>
+      </div>
+
+      <div id="offline-settings" style="display: none;">
+        <!-- 离线模型管理 -->
+        <div style="margin-top:2rem;padding-top:2rem;border-top:1px solid var(--border)">
+          <h3 style="font-family:var(--font-display);font-size:1.1rem;margin-bottom:.4rem">离线模型管理</h3>
+          <p style="color:var(--text2);font-size:.88rem;margin-bottom:1.2rem">
+            下载模型到本地后，无需联网即可生成提示词
+          </p>
+
+          <!-- 引擎切换 -->
+          <div class="setting-group">
+            <label>生成引擎</label>
+            <select id="set-engine" onchange="onEngineChange(this.value)">
+              <option value="online">在线（内置服务 / 你的 API）</option>
+              <option value="offline">离线（本地模型）</option>
+            </select>
+            <div class="hint">切换到离线模式后将使用本地模型，无需联网</div>
+            <div class="hint" id="builtin-service-status" style="margin-top:.4rem"></div>
+          </div>
+
+          <!-- 模型选择 -->
+          <div id="offline-model-section" style="display:none">
+            <div class="setting-group">
+              <label>选择模型</label>
+              <div id="model-cards" style="display:grid;gap:.8rem;max-width:560px"></div>
+            </div>
+
+            <!-- 加载进度 -->
+            <div id="model-progress" style="display:none;margin:1rem 0;max-width:560px" class="progress-bar-container">
+              <div class="progress-bar-header">
+                <span id="progress-text" class="progress-bar-text">准备中...</span>
+                <span id="progress-pct" class="progress-bar-pct">0%</span>
+              </div>
+              <div class="progress-bar-track">
+                <div id="progress-bar" class="progress-bar-fill"></div>
+              </div>
+            </div>
+
+            <!-- 模型状态 -->
+            <div id="model-status" style="font-size:.82rem;color:var(--text3);margin-top:.5rem"></div>
+
+            <!-- 设备信息 -->
+            <div id="device-info" style="font-size:.78rem;color:var(--text3);margin-top:.8rem;padding:.6rem .8rem;background:var(--s2);border-radius:var(--r-sm);max-width:560px"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>软件更新源地址（可选）</label>
+        <input type="text" id="set-update-url" placeholder="https://你的站点/promptforge">
+        <div class="hint">客户端会读取该地址下的 <span class="mono">version.json</span> 检测新版本，发现后自动下载并安装。发布包里的 <span class="mono">release/version.json</span> 与网页端共用同一份，填网页端的访问地址即可让两端版本始终一致。</div>
+        <div class="hint">留空则只从本地更新文件夹读取（离线也能更新，见下方按钮）。</div>
+        <div class="sync-actions">
+          <button class="btn btn-secondary btn-sm" onclick="testUpdateSource()">检测更新源</button>
+          <button class="btn btn-ghost btn-sm" onclick="openUpdateFolder()">打开更新文件夹</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadDesktopInstaller()">下载桌面版</button>
+          <span id="update-source-status" class="sync-status-text"></span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>数据备份与迁移</label>
+        <div class="backup-actions">
+          <button class="btn btn-secondary btn-sm" onclick="exportAllData()">导出全部数据</button>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('import-file').click()">导入数据</button>
+          <input type="file" id="import-file" accept=".json,application/json" class="hidden" onchange="importAllData(event)">
+        </div>
+        <div class="hint">包含历史记录与 API 设置（含密钥），请妥善保管导出文件</div>
+      </div>
+
+      <div class="setting-group">
+        <label>云同步（可选 · 多端自动同步）</label>
+        <input type="text" id="set-sb-url" placeholder="https://xxxx.supabase.co">
+        <div class="hint">Supabase 项目 URL（Dashboard → Settings → API）</div>
+        <input type="password" id="set-sb-key" class="mt-sm" placeholder="anon public key">
+        <div class="hint">Supabase anon key，与 URL 在同一页面</div>
+        <input type="text" id="set-sb-ns" class="mt-sm" placeholder="同步空间名，如 my-forge">
+        <div class="hint">各设备填写相同的空间名即互相同步；留空默认 "default"</div>
+        <div class="sync-actions">
+          <button class="btn btn-secondary btn-sm" onclick="syncNow(true)">⇅ 立即同步</button>
+          <button class="btn btn-ghost btn-sm" onclick="openSyncGuide()">首次配置指南</button>
+          <span id="sync-status" class="sync-status-text"></span>
+        </div>
+        <div class="hint">同步内容：历史记录、删除记录、API 设置（不含云同步配置本身）。保存/删除后自动同步，也可断网使用、联网后手动同步。</div>
+      </div>
+
+      <button class="btn btn-primary mt-sm" onclick="saveSettings()">保存设置</button>
+      <span id="save-status" class="save-status"></span>
+
+      <!-- 安装位置：解决"装完找不到主程序在哪" -->
+      <div class="setting-group" id="install-location-group" style="margin-top:1.6rem">
+        <label>程序位置</label>
+        <div class="hint">主程序：<span class="mono" id="app-exe-path">--</span></div>
+        <div class="row-sm" style="margin-top:.5rem">
+          <button class="btn btn-secondary btn-sm" onclick="openAppDir()">打开安装目录</button>
+          <button class="btn btn-ghost btn-sm" onclick="createDesktopShortcut()">创建桌面快捷方式</button>
+        </div>
+        <div class="hint">开始菜单中也有「PromptForge」入口。桌面版无需在网页里安装。</div>
+      </div>
+
+      <!-- 卸载入口：独立放在设置页最底部，安装界面不再提供 -->
+      <div class="setting-group danger-zone" id="uninstall-group">
+        <label>卸载与移除</label>
+        <div class="hint" id="uninstall-hint">卸载前建议先导出一份数据备份。</div>
+        <div class="row-sm" style="margin-top:.5rem">
+          <button class="btn btn-danger btn-sm" onclick="uninstallCurrentTarget()">卸载 PromptForge</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- View: Personalize -->
+    <div id="view-personalize" class="view">
+      <h2 class="view-title">个性化</h2>
+      <p class="view-desc">自由搭配主题色、字体与背景氛围，实时预览并自动保存</p>
+
+      <div class="step-card">
+        <div class="step-label">显示模式</div>
+        <div class="mode-cards">
+          <button class="mode-card" data-mode="light" onclick="setMode('light')"><span class="mode-swatch mode-swatch-light"></span><b>日间模式</b><span>白色 · 明亮清爽</span></button>
+          <button class="mode-card" data-mode="dark" onclick="setMode('dark')"><span class="mode-swatch mode-swatch-dark"></span><b>夜间模式</b><span>黑色 · 护眼沉浸</span></button>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-label">主题色</div>
+        <div class="swatch-row" id="accent-swatches">
+          <button class="swatch" data-accent="#4ade80" style="background:#4ade80" title="松石绿" onclick="setAccent('#4ade80')"></button>
+          <button class="swatch" data-accent="#60a5fa" style="background:#60a5fa" title="晴空蓝" onclick="setAccent('#60a5fa')"></button>
+          <button class="swatch" data-accent="#a78bfa" style="background:#a78bfa" title="暮云紫" onclick="setAccent('#a78bfa')"></button>
+          <button class="swatch" data-accent="#f472b6" style="background:#f472b6" title="樱粉" onclick="setAccent('#f472b6')"></button>
+          <button class="swatch" data-accent="#fb923c" style="background:#fb923c" title="暖橙" onclick="setAccent('#fb923c')"></button>
+          <button class="swatch" data-accent="#22d3ee" style="background:#22d3ee" title="湖蓝" onclick="setAccent('#22d3ee')"></button>
+        </div>
+        <div class="hint swatch-custom">自定义颜色：<input type="color" id="custom-accent" value="#4ade80" onchange="setAccent(this.value)"></div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-label">界面字体</div>
+        <div class="font-options" id="font-options">
+          <button class="font-option" data-font="serif" onclick="setFont('serif')"><b>衬线雅致</b><span>默认 · 温润书卷气</span></button>
+          <button class="font-option" data-font="sans" onclick="setFont('sans')"><b>无衬线清爽</b><span>现代 · 屏幕更利落</span></button>
+          <button class="font-option" data-font="mono" onclick="setFont('mono')"><b>等宽极客</b><span>代码感 · 终端风</span></button>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-label">背景氛围</div>
+        <div class="bg-options" id="bg-options">
+          <button class="bg-option" data-bg="night" onclick="setBackground('night')"><span class="bg-dot" style="background:linear-gradient(120deg,#08090d,#14532d)"></span><b>深邃夜色</b><span>默认</span></button>
+          <button class="bg-option" data-bg="forest" onclick="setBackground('forest')"><span class="bg-dot" style="background:linear-gradient(120deg,#07110c,#166534)"></span><b>林间墨绿</b><span>静谧苔色</span></button>
+          <button class="bg-option" data-bg="ocean" onclick="setBackground('ocean')"><span class="bg-dot" style="background:linear-gradient(120deg,#070d14,#1e40af)"></span><b>深海湛蓝</b><span>冷冽通透</span></button>
+          <button class="bg-option" data-bg="purple" onclick="setBackground('purple')"><span class="bg-dot" style="background:linear-gradient(120deg,#0d0a14,#6d28d9)"></span><b>暮云紫夜</b><span>神秘浪漫</span></button>
+          <button class="bg-option" data-bg="ember" onclick="setBackground('ember')"><span class="bg-dot" style="background:linear-gradient(120deg,#140c07,#c2410c)"></span><b>余烬暖光</b><span>温暖黄昏</span></button>
+        </div>
+      </div>
+
+      <div class="row-sm">
+        <button class="btn btn-ghost btn-sm" onclick="resetPersonalization()">恢复默认</button>
+        <span class="hint" style="align-self:center">所有选择自动保存</span>
+      </div>
+    </div>
+
+    <!-- View: Help -->
+    <div id="view-help" class="view">
+      <h2 class="view-title">帮助 · 模型使用方法</h2>
+      <p class="view-desc">从零开始配置大模型，快速跑通提示词优化流程</p>
+
+      <div class="help-section">
+        <h3>一、快速开始</h3>
+        <ol class="help-steps">
+          <li>打开「设置」页，按下方任一方式配置好模型（首次使用必须）。</li>
+          <li>进入「新建优化」，输入你的初步想法，点击「开始优化」。</li>
+          <li>回答 AI 提出的追问（也可直接跳过），等待生成结构化提示词。</li>
+          <li>在结果区可复制、评分、切换框架，或导出为 MD / JSON / PDF。</li>
+          <li>已有成稿提示词？进「⚡ 提示词优化」粘贴进去，一键精修并对比原文。</li>
+        </ol>
+      </div>
+
+      <div class="help-section">
+        <h3>二、在线 API 模型（推荐）</h3>
+        <p>在「设置」页点击对应的预设按钮会自动填入端点与模型，只需再粘贴你自己的 API Key，然后保存。</p>
+        <table class="help-table">
+          <tr><th>服务商</th><th>API 端点</th><th>默认模型</th><th>Key 获取平台</th></tr>
+          <tr><td>DeepSeek</td><td class="mono">https://api.deepseek.com/v1</td><td class="mono">deepseek-chat</td><td>platform.deepseek.com</td></tr>
+          <tr><td>Moonshot / Kimi</td><td class="mono">https://api.moonshot.cn/v1</td><td class="mono">moonshot-v1-8k</td><td>platform.moonshot.cn</td></tr>
+          <tr><td>通义千问</td><td class="mono">https://dashscope.aliyuncs.com/compatible-mode/v1</td><td class="mono">qwen-plus</td><td>bailian.console.aliyun.com</td></tr>
+          <tr><td>智谱 GLM</td><td class="mono">https://open.bigmodel.cn/api/paas/v4</td><td class="mono">glm-4-flash</td><td>open.bigmodel.cn</td></tr>
+          <tr><td>OpenAI</td><td class="mono">https://api.openai.com/v1</td><td class="mono">gpt-4o-mini</td><td>platform.openai.com</td></tr>
+        </table>
+        <p class="help-note">模型名称可自由换成该服务商任意 OpenAI 兼容模型（如 deepseek-reasoner、qwen-max、glm-4-plus）；也可填入任意第三方中转站点的 OpenAI 兼容地址。</p>
+      </div>
+
+      <div class="help-section">
+        <h3>三、Ollama 本地模型（免费 · 需本地运行）</h3>
+        <ol class="help-steps">
+          <li>在 ollama.com 下载安装 Ollama 并保持运行。</li>
+          <li>终端执行 <span class="mono">ollama pull qwen2.5:7b</span> 下载模型（可换成其他模型名，如 llama3.1:8b）。</li>
+          <li>在「设置」页点「Ollama 本地」预设（端点 http://localhost:11434/v1，密钥留空），模型名填你 pull 的模型，保存即可。</li>
+        </ol>
+      </div>
+
+      <div class="help-section">
+        <h3>四、离线模型（无需 API · 完全本地）</h3>
+        <p>在「设置」页把「运行引擎」切换为「本地离线」，然后在「离线模型管理」中选择模型卡片并点击「下载加载」：</p>
+        <ul class="help-steps">
+          <li><b>Qwen2.5-1.5B</b>（约 1.5GB）：中文能力优秀，提示词优化效果最好，推荐。</li>
+          <li><b>Phi-3.5 Mini</b>（约 2.2GB）：英文能力强，通用推理好。</li>
+          <li><b>SmolLM2-1.7B</b>（约 1.0GB）：最轻量，适合低内存设备。</li>
+        </ul>
+        <p class="help-note">首次下载需联网，之后完全离线运行。支持 WebGPU 硬件加速；设备不支持时自动降级为 WASM（纯 CPU），加载与推理会更慢。8GB 以上内存推荐 Qwen2.5-1.5B，低内存设备选 SmolLM2。</p>
+      </div>
+
+      <div class="help-section">
+        <h3>五、常见问题</h3>
+        <div class="faq-item"><b>生成时报「请求失败 / Failed to fetch」？</b>检查 API 端点、密钥与模型名是否填写正确，并确认网络可达；离线模式则不受影响。</div>
+        <div class="faq-item"><b>离线模型下载到一半失败？</b>检查网络后重新点击下载即可重新尝试；加载慢可换更小的模型。</div>
+        <div class="faq-item"><b>生成的提示词效果不满意？</b>换一个框架（CO-STAR / CREATE / BROKE）、在「框架对比」中多框架生成，或把「追问灵敏度」调高。</div>
+        <div class="faq-item"><b>「提示词优化」和「新建优化」有什么区别？</b>「新建优化」是从一个模糊想法生成提示词；「提示词优化」是精修一条你已经写好的提示词，会诊断任务 / 上下文 / 参数约束 / 输出格式四个维度并补齐，且本地规则模式不联网也能用。</div>
+        <div class="faq-item"><b>如何备份/迁移数据？</b>设置页「导出全部数据」，新设备上「导入数据」即可。</div>
+        <div class="faq-item"><b>API 密钥安全吗？</b>密钥仅保存在本机浏览器存储中，不会上传到任何服务器（云同步会同步设置内容，请妥善保管导出文件）。</div>
+      </div>
+
+      <div class="help-section" id="help-update-section">
+        <h3>六、软件更新（桌面版）</h3>
+        <p>程序版本：<b class="mono" id="cur-version">--</b>　前端资源版本：<b class="mono" id="cur-web-version">--</b>　更新状态：<span id="upd-status">检查中...</span></p>
+        <p class="help-note" id="upd-notes" style="margin-top:.4rem"></p>
+        <p class="help-note" id="upd-source-hint" style="margin-top:.4rem">更新源：检测中…</p>
+        <p class="help-note">更新文件夹：<span class="mono" id="upd-dir">--</span></p>
+        <ol class="help-steps">
+          <li>侧边栏有独立的「⟳ 检查更新」菜单：<b>发现新版本时右侧会冒红点</b>，单击即可自动下载并安装——纯界面更新<b>无需退出软件</b>，自动刷新生效。</li>
+          <li><b>通常不需要任何配置。</b>客户端会依次从「你填写的更新源 → 清单里的内置分发源 → 本机部署地址 → 程序目录下的 version.json → 更新文件夹」自动寻找版本清单，找到就检测。</li>
+          <li>需要指定固定更新源时：在「设置 → 软件更新源地址」填入发布目录的访问地址（放着 <span class="mono">version.json</span> 的那个目录），保存后点「测试连接」验证。</li>
+          <li>完全离线也可更新：把 <span class="mono">version.json</span> 和更新包一起放进更新文件夹（点下方「打开更新文件夹」）。</li>
+          <li>应用启动与运行中每 45 秒自动检查一次，红点出现即代表可更新。</li>
+        </ol>
+        <p class="help-note" style="margin-top:.4rem">
+          上方「更新源」一行会直接告诉你<b>实际用的是哪一处清单、清单上是哪个版本</b>。
+          若显示"检查失败"，原因会写在这里（例如清单缺少安装包字段），不会再笼统显示"最新版本"。
+        </p>
+        <div class="row-sm">
+          <button class="btn btn-secondary btn-sm" onclick="checkForUpdate(true)">检查更新</button>
+          <button class="btn btn-primary btn-sm" id="btn-install-update" onclick="doAppUpdate()" disabled>下载并安装</button>
+          <button class="btn btn-ghost btn-sm" onclick="openUpdateFolder()">打开更新文件夹</button>
+        </div>
+        <p class="help-note" style="margin-top:.6rem">离线模型大文件不参与更新流程，更新后已下载的模型继续可用。浏览器/PWA 版无需更新。</p>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Mobile Nav -->
+<div id="mobile-nav">
+  <button class="mobile-nav-btn active" data-view="new"><span>✦</span>新建</button>
+  <button class="mobile-nav-btn" data-view="optimize"><span>⚡</span>精修</button>
+  <button class="mobile-nav-btn" data-view="templates"><span>◈</span>模板</button>
+  <button class="mobile-nav-btn" data-view="compare"><span>⇄</span>对比</button>
+  <button class="mobile-nav-btn" data-view="history"><span>◷</span>历史</button>
+  <button class="mobile-nav-btn" data-view="settings"><span>⚙</span>设置</button>
+  <button class="mobile-nav-btn" data-view="personalize"><span>🎨</span>个性</button>
+  <button class="mobile-nav-btn" data-view="help"><span>?</span>帮助</button>
+</div>
+
+<!-- QR Modal -->
+<div id="qrmodal" class="modal hidden">
+  <div class="modal-box">
+    <h3>扫码查看提示词</h3>
+    <p class="hint">分享链接已复制，扫描二维码或直接打开链接即可还原内容</p>
+    <img id="qr-img" src="" alt="二维码">
+    <button class="btn btn-secondary btn-sm" onclick="closeQR()">关闭</button>
+  </div>
+</div>
+
+<!-- Sync Guide Modal -->
+<div id="syncguide" class="modal hidden">
+  <div class="modal-box modal-box-left">
+    <h3>首次配置云同步</h3>
+    <div class="sync-guide">
+      <p><b>1.</b> 打开 <span class="mono">supabase.com</span> 注册并创建一个免费项目（等待初始化完成）。</p>
+      <p><b>2.</b> 在项目里打开 <b>SQL Editor</b>，粘贴并执行以下 SQL 建表：</p>
+      <pre id="sync-sql" class="sql-block">create table if not exists public.pf_records (
+  id text primary key,
+  ns text not null,
+  updated_at timestamptz not null,
+  payload jsonb not null
+);
+alter table public.pf_records enable row level security;
+create policy "pf_anon_all" on public.pf_records
+  for all using (true) with check (true);</pre>
+      <p><b>3.</b> 回到本应用设置页，填写 Supabase <b>URL</b> 与 <b>anon key</b>（Dashboard → Settings → API），给各设备填<b>相同的空间名</b>，保存后点"立即同步"。</p>
+      <p class="sec-note">安全说明：anon key 本身是公开的，数据靠"空间名"隔离，请使用不易被猜到的空间名，勿与其他服务共用。</p>
+    </div>
+    <div class="row-sm">
+      <button class="btn btn-secondary btn-sm" onclick="copySyncSQL()">复制建表 SQL</button>
+      <button class="btn btn-secondary btn-sm" onclick="closeSyncGuide()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- 自描述部署根地址：任何加载本页的上下文（HTTP 部署、桌面端内置静态服务、二次分发的
+     便携包）都能在运行时算出自己的更新源，不必依赖发布者预先填写 updateUrl。
+     放在所有业务脚本之前，保证 js/app.js 读取时已有值。
+     桌面端尤为关键：本页由 127.0.0.1:<port> 提供，此处推导出的地址即
+     "这个客户端自己所在的前端目录"，客户端因此可以从自身部署位置检测更新。 -->
+<script>
+(function () {
+  try {
+    var loc = window.location;
+    // file:// 下无法作为更新源（无 HTTP 语义，且 Rust 侧 reqwest 不支持 file 协议）
+    if (!loc.protocol || loc.protocol === 'file:') { window.PF_DEPLOY_BASE = ''; return; }
+    // 去掉末尾的 index.html / 文件名，保留目录路径
+    var base = loc.origin + loc.pathname.replace(/[^/]*$/, '');
+    window.PF_DEPLOY_BASE = base.replace(/\/+$/, '');
+  } catch (e) { window.PF_DEPLOY_BASE = ''; }
+})();
+</script>
+
+<script src="js/frameworks.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/builtin-service.js"></script>
+<script src="js/unified-llm.js"></script>
+<script src="js/offline-llm.js"></script>
+<script src="js/device-detection.js"></script>
+<script src="js/offline-ui.js"></script>
+<script src="js/pwa.js"></script>
+<script src="js/api.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/export.js"></script>
+<script src="js/local-model.js"></script>
+<script src="js/personalize.js"></script>
+<script src="js/style-variants.js"></script>
+<script src="js/optimizer.js"></script>
+<script src="js/optimize-ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
