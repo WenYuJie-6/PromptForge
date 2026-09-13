@@ -105,6 +105,16 @@ r.check(htmlIds.has('download-desktop-btn'), '侧边栏存在「下载桌面版�
 r.check(html.includes('onclick="downloadDesktopInstaller()"'), '「下载桌面版」绑定到 downloadDesktopInstaller()');
 r.check(!htmlIds.has('pwa-menu-btn'), '侧边栏已无「安装应用」按钮（pwa-menu-btn）');
 r.check(!html.includes('showPWAInstallMenu'), 'index.html 不再引用已删除的 showPWAInstallMenu');
+// 回归护栏：浮动「安装到桌面」按钮已随产品决策移除。
+// 注意 pwa.js 里有一段注释会提到这些名字（说明为什么删），所以必须**剥掉注释**再扫，
+// 否则这条断言会永远为真、失去意义。
+{
+  const pwaCode = stripComments(read('js/pwa.js'));
+  const leftovers = ['showInstallButton', 'hideInstallButton', 'checkInstallAvailability', 'pwa-install-btn']
+    .filter((n) => pwaCode.includes(n));
+  r.check(leftovers.length === 0,
+    `pwa.js 中不再有浮动安装按钮的代码（残留：${leftovers.join(',') || '无'}）`);
+}
 r.check(htmlIds.has('nav-check-update'), '侧边栏存在「检查更新」入口');
 r.check(htmlIds.has('update-dot'), '「检查更新」带红点元素 update-dot');
 r.check(html.includes('PF_DEPLOY_BASE'), 'index.html 注入 PF_DEPLOY_BASE（自描述部署根地址）');

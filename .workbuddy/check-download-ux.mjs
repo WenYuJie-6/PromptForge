@@ -150,4 +150,37 @@ r.section('E. 桌面版');
   r.eq(t.fetches.length, 0, '桌面版不发起请求');
 }
 
+// ---- F. 分享链接长度保护 ----
+r.section('F. 分享链接 / 二维码长度保护');
+{
+  const t = setup();
+  const setOutput = (s) => t.env.eval(`state.outputText = ${JSON.stringify(s)}`);
+
+  // 短内容：正常生成
+  setOutput('很短的提示词');
+  t.toast.length = 0;
+  const url = t.env.eval('shareLink()');
+  r.check(typeof url === 'string' && url.includes('#s='), '短内容正常生成分享链接');
+  // 「已复制」提示在 clipboard.writeText().then() 里，需等一个微任务
+  await new Promise((res) => setTimeout(res, 0));
+  r.check(t.toast.some((m) => m.includes('已复制')), '复制成功后给出提示');
+
+  // 超长内容：不再生成链接（否则给出的是打不开的长 URL）
+  setOutput('x'.repeat(40000));
+  t.toast.length = 0;
+  const tooLong = t.env.eval('shareLink()');
+  r.eq(tooLong, null, '超过上限时返回 null（不生成无效链接）');
+  r.check(t.toast.some((m) => m.includes('过长') && m.includes('导出')),
+    '超长时提示改用导出，而不是默默给出坏链接');
+
+  // 中等长度：链接能生成，但二维码放不下 —— 应提前说明，不要返回一张报错图
+  setOutput('y'.repeat(3000));
+  t.toast.length = 0;
+  t.env.eval('showQR()');
+  r.check(t.toast.some((m) => m.includes('二维码') && m.includes('过长')),
+    '内容过长时明确说明二维码放不下');
+  const qr = t.env.document.getElementById('qr-img');
+  r.check(!qr || qr.src === '', '未设置无效的二维码图片地址');
+}
+
 r.done();

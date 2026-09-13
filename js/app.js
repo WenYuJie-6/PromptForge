@@ -483,6 +483,13 @@ function decodeShare(b64) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
+// 分享链接把整段提示词 base64 后放进 URL 的 hash，内容越长链接越长。
+// 长链接的现实问题：部分聊天软件/浏览器会截断；二维码接口对 data 参数有上限，
+// 超了会返回一张报错图片。所以这里分级处理，而不是默默给出一个打不开的链接。
+const SHARE_URL_WARN = 8000;   // 偏长，提醒可能被截断（仍然复制）
+const SHARE_URL_MAX = 32000;   // 超此长度不再生成，引导改用导出
+const QR_URL_MAX = 2000;       // 二维码接口能承载的上限
+
 function shareLink() {
   if (!state.outputText) { toast('请先生成提示词'); return null; }
   const payload = encodeShare({
@@ -493,8 +500,15 @@ function shareLink() {
     date: new Date().toISOString(),
   });
   const url = location.href.split('#')[0] + '#s=' + payload;
+  if (url.length > SHARE_URL_MAX) {
+    toast('内容过长，无法生成分享链接，请改用「↓ MD / ↓ JSON」导出');
+    return null;
+  }
+  if (url.length > SHARE_URL_WARN) {
+    toast('提示词较长，分享链接已复制，但部分软件可能截断，建议改用导出');
+  }
   navigator.clipboard.writeText(url)
-    .then(() => toast('分享链接已复制到剪贴板'))
+    .then(() => toast(url.length > SHARE_URL_WARN ? '分享链接已复制（较长，注意截断）' : '分享链接已复制到剪贴板'))
     .catch(() => toast('复制失败，请手动复制：' + url));
   return url;
 }
@@ -502,6 +516,11 @@ function shareLink() {
 function showQR() {
   const url = shareLink();
   if (!url) return;
+  // 超长内容二维码放不下，接口只会返回错误图，提前说明比让用户看到一张废图好
+  if (url.length > QR_URL_MAX) {
+    toast('内容过长，二维码放不下，请改用分享链接或「↓ MD / ↓ JSON」导出');
+    return;
+  }
   document.getElementById('qr-img').src =
     'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(url);
   document.getElementById('qrmodal').classList.remove('hidden');

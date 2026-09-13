@@ -43,11 +43,26 @@ function loadHistory() {
     return JSON.parse(localStorage.getItem('pf_history')) || [];
   } catch { return []; }
 }
+// 新增一条历史。内容重复时**不再新增副本**：
+// 重复点「保存」会在列表里堆出一模一样的记录，既占位又让人以为保存失败。
+// 命中重复时把旧记录提到最前并刷新时间 —— 语义上等价于「再次保存」。
+// @returns {{deduped: boolean}} 便于调用方给出不同提示
 function addHistory(item) {
   const h = loadHistory();
+  const key = item && item.output != null ? String(item.output) : '';
+  if (key) {
+    const i = h.findIndex((x) => x && String(x.output ?? '') === key);
+    if (i >= 0) {
+      const [old] = h.splice(i, 1);
+      h.unshift(Object.assign({}, old, item, { updatedAt: Date.now() }));
+      localStorage.setItem('pf_history', JSON.stringify(h));
+      return { deduped: true };
+    }
+  }
   h.unshift(item);
   if (h.length > 50) h.length = 50;
   localStorage.setItem('pf_history', JSON.stringify(h));
+  return { deduped: false };
 }
 function loadTombstones() {
   try {

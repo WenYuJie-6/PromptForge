@@ -83,6 +83,20 @@ ev('localStorage.removeItem("pf_history")');
 for (let i = 0; i < 60; i++) ev(`addHistory({ id: ${i} })`);
 r.eq(ev('loadHistory().length'), 50, '历史记录上限 50 条');
 r.eq(ev('loadHistory()[0].id'), 59, '最新一条在最前（unshift）');
+// 去重：重复点「保存」不应堆出一模一样的记录
+ev('localStorage.removeItem("pf_history")');
+ev('addHistory({ id: 1, output: "同一段提示词" })');
+ev('addHistory({ id: 2, output: "另一段提示词" })');
+ev('const __dup = addHistory({ id: 3, output: "同一段提示词" })');
+r.eq(ev('loadHistory().length'), 2, '重复内容不再产生新副本');
+r.eq(ev('Boolean(__dup && __dup.deduped)'), true, 'addHistory 返回 deduped 标记，便于调用方提示');
+r.eq(ev('loadHistory()[0].id'), 3, '重复保存时把旧记录提到最前并沿用新 id');
+r.eq(ev('loadHistory()[0].output'), '同一段提示词', '去重后内容保持不变');
+// 没有 output 字段的记录不做去重（避免误合并）
+ev('localStorage.removeItem("pf_history")');
+ev('addHistory({ id: 1 })');
+ev('addHistory({ id: 2 })');
+r.eq(ev('loadHistory().length'), 2, '无 output 字段时不触发去重');
 ev('saveSettingsToStorage({})');
 r.check(ev('typeof loadTombstones()') === 'object', 'saveTombstones/loadTombstones 可用');
 const big = Array.from({ length: 600 }, (_, i) => 't' + i);

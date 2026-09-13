@@ -3,7 +3,6 @@
 
 const PWAInstaller = (() => {
   let deferredPrompt = null;
-  let installButton = null;
   let isInstalled = false;
   let initialized = false;
 
@@ -32,7 +31,6 @@ const PWAInstaller = (() => {
     // 监听应用安装完成事件
     window.addEventListener('appinstalled', () => {
       isInstalled = true;
-      hideInstallButton();
       showInstallSuccess();
       console.log('PromptForge 已安装到桌面');
     });
@@ -44,64 +42,10 @@ const PWAInstaller = (() => {
     checkServiceWorkerStatus();
   }
 
-  function showInstallButton() {
-    // 在主界面添加安装按钮
-    const installBtn = document.createElement('button');
-    installBtn.id = 'pwa-install-btn';
-    installBtn.className = 'btn btn-primary';
-    installBtn.innerHTML = `
-      <span class="install-icon">📱</span>
-      <span class="install-text">安装到桌面</span>
-    `;
-    installBtn.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      z-index: 1000;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      transition: all 0.3s ease;
-    `;
-    
-    installBtn.addEventListener('click', handleInstall);
-    
-    // 添加悬停效果
-    installBtn.addEventListener('mouseenter', () => {
-      installBtn.style.transform = 'translateY(-2px)';
-      installBtn.style.boxShadow = '0 6px 16px rgba(0,0,0,0.2)';
-    });
-    
-    installBtn.addEventListener('mouseleave', () => {
-      installBtn.style.transform = 'translateY(0)';
-      installBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-    });
-    
-    document.body.appendChild(installBtn);
-    installButton = installBtn;
-    
-    // 5秒后自动隐藏
-    setTimeout(() => {
-      if (!isInstalled) {
-        hideInstallButton();
-      }
-    }, 5000);
-  }
-
-  // 隐藏安装按钮
-  function hideInstallButton() {
-    if (installButton) {
-      installButton.style.opacity = '0';
-      installButton.style.transform = 'translateY(20px)';
-      setTimeout(() => {
-        if (installButton && installButton.parentNode) {
-          installButton.parentNode.removeChild(installButton);
-        }
-        installButton = null;
-      }, 300);
-    }
-  }
+  // 注意：这里原本有一套「浮动安装按钮」（showInstallButton / hideInstallButton /
+  // checkInstallAvailability）。产品上已确定网页端安装入口只有侧边栏的「下载桌面版」，
+  // 侧边栏「安装应用」入口也已移除，这套代码再无任何调用点 —— 留着只会让人误以为
+  // 还能把浮动按钮加回来，故一并删除（约 60 行死代码）。
 
   // 处理安装点击
   async function handleInstall() {
@@ -116,7 +60,6 @@ const PWAInstaller = (() => {
       
       if (outcome === 'accepted') {
         console.log('用户接受了安装');
-        hideInstallButton();
       } else {
         console.log('用户拒绝了安装');
         showInstallInfo();
@@ -283,7 +226,6 @@ function checkIfInstalled() {
     if (window.matchMedia('(display-mode: standalone)').matches || 
         window.matchMedia('(display-mode: fullscreen)').matches) {
       isInstalled = true;
-      hideInstallButton();
       return;
     }
 
@@ -291,7 +233,6 @@ function checkIfInstalled() {
     const installed = localStorage.getItem('pwa-installed') === 'true';
     if (installed) {
       isInstalled = true;
-      hideInstallButton();
     }
   }
 
@@ -311,16 +252,9 @@ function checkIfInstalled() {
     });
   }
 
-  // 手动触发安装检查
-  function checkInstallAvailability() {
-    if (deferredPrompt && !isInstalled) {
-      showInstallButton();
-    }
-  }
-
   // 直接发起安装。
-  // 之前侧边栏「安装应用」只调 showInstallButton()——它只是弹出一个 5 秒后
-  // 自动消失的浮动按钮，从不调用 prompt()，用户点了就"没反应"。
+  // 现在网页端唯一的安装入口是侧边栏「下载桌面版」（走 downloadDesktopInstaller）。
+  // 这里保留 install() 供设置页等处按需调用；不再提供「浮动安装按钮」那条路径。
   async function install() {
     if (isInstalled) return { ok: false, reason: 'installed' };
 
@@ -333,7 +267,6 @@ function checkIfInstalled() {
       deferredPrompt = null;
       if (choice && choice.outcome === 'accepted') {
         markAsInstalled();
-        hideInstallButton();
         return { ok: true, outcome: 'accepted' };
       }
       return { ok: false, reason: 'dismissed' };
@@ -400,14 +333,12 @@ function checkIfInstalled() {
   function markAsInstalled() {
     isInstalled = true;
     localStorage.setItem('pwa-installed', 'true');
-    hideInstallButton();
   }
 
   // 公开 API
   return {
     init,
     install,
-    checkInstallAvailability,
     markAsInstalled,
     uninstallWebApp,
     getInstallHint,
