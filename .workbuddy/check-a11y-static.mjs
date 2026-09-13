@@ -105,11 +105,25 @@ for (const [name, test] of ICON_BTNS) {
 // ---- 6. askDialog 无障碍结构 ----
 r.section('6. askDialog：模态语义 + 键盘可用');
 const app = stripComments(read('js/app.js'));
-const dialogBody = (() => {
-  const i = app.indexOf('function askDialog');
-  return i >= 0 ? app.slice(i, i + 4000) : '';
-})();
-r.check(dialogBody.length > 0, '能定位 askDialog 函数体');
+// 按函数边界（花括号配平）切出 askDialog —— 不用固定字符数截取，
+// 否则函数一旦变长，role/aria-modal/Esc 等结构断言会静默失配（恒真类风险）。
+// 说明：函数体模板串里的 ${…} 花括号天然配平，不影响计数。
+function extractFunctionBody(src, name) {
+  const start = src.indexOf('function ' + name);
+  if (start < 0) return '';
+  const open = src.indexOf('{', start);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  return src.slice(start);
+}
+const dialogBody = extractFunctionBody(app, 'askDialog');
+r.check(dialogBody.length > 0, '能按函数边界定位 askDialog 函数体');
+r.check(/new Promise/.test(dialogBody) && /\}\s*$/.test(dialogBody),
+  '切片结果确为完整函数体（含 new Promise 且以 } 收尾）');
 r.check(/setAttribute\(\s*'role'\s*,\s*'dialog'\s*\)/.test(dialogBody), '设置 role="dialog"');
 r.check(/setAttribute\(\s*'aria-modal'\s*,\s*'true'\s*\)/.test(dialogBody), '设置 aria-modal="true"');
 r.check(/aria-labelledby/.test(dialogBody), '用 aria-labelledby 关联标题');

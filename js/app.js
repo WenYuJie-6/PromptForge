@@ -823,12 +823,11 @@ function resetFlow() {
   showStep('input');
 }
 
-function switchView(view) {
-  state.currentView = view;
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById(`view-${view}`).classList.add('active');
-
-  // 导航激活态同步维护 aria-current：读屏用户据此知道「当前在哪个页面」。
+// 导航激活态与 aria-current 同步：读屏用户据此知道「当前在哪个页面」。
+// 抽成独立函数的目的是让首屏也能初始化一次 —— DOMContentLoaded 不经过 switchView，
+// 否则首次进入页面时导航项没有任何 aria-current（读屏不知道自己在哪个视图）。
+// 必须用 function 声明：本文件顶层 const 不会成为 window 属性，内联 handler 无法访问。
+function syncNavAriaCurrent(view) {
   // 用 setAttribute('aria-current', 'false') 而非 removeAttribute，语义等价且无副作用。
   document.querySelectorAll('.nav-item').forEach(n => {
     const on = n.dataset.view === view;
@@ -840,6 +839,14 @@ function switchView(view) {
     n.classList.toggle('active', on);
     n.setAttribute('aria-current', on ? 'page' : 'false');
   });
+}
+
+function switchView(view) {
+  state.currentView = view;
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(`view-${view}`).classList.add('active');
+
+  syncNavAriaCurrent(view);
 
   if (view === 'compare') initCompare();
   if (view === 'optimize') initOptimizeView();
@@ -1975,6 +1982,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 内置在线服务：拉一次配置，让没配 API 的新装用户也能直接联网用
   initBuiltinService();
+
+  // 首屏同步一次导航 aria-current（初始化不经过 switchView，否则首页无任何 aria-current）
+  syncNavAriaCurrent(state.currentView || 'new');
 
   // 如果是离线模式，初始化离线 UI
   const currentEngine = loadSettings().engine;

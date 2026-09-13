@@ -76,6 +76,27 @@ r.check(handlers.size >= 55, `index.html 解析出 ${handlers.size} 个内联处
 const undef = [...handlers].filter((h) => !defined.has(h)).sort();
 r.check(undef.length === 0, `每个内联处理函数都有定义（未定义：${undef.join(',') || '无'}）`);
 
+// 绑定方式区分（C6 变异护栏）：内联 onclick 通过 window 查找函数，
+//   fnBound      = `function NAME(` 或 `window.NAME =` —— 会成为 window 属性，能命中；
+//   lexicalBound = 仅 `const|let|var NAME =` —— 顶层 const/let 只是「全局词法绑定」，
+//                  **不是** window 属性，内联 handler 找不到 ⇒ 真机上点了没反应。
+// 历史教训：clearHistory 若被写成 `const clearHistory = async function()`，
+// 上面的 `defined`（含 const）与 check-a11y-static 都会保持全绿，但按钮静默失效。
+const fnBound = new Set();
+const lexicalBound = new Set();
+for (const f of jsFiles()) {
+  const src = stripComments(read(f));
+  for (const m of src.matchAll(/(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) fnBound.add(m[1]);
+  for (const m of src.matchAll(/window\.([A-Za-z_$][\w$]*)\s*=/g)) fnBound.add(m[1]);
+  for (const m of src.matchAll(/(?:^|[\s;{])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) lexicalBound.add(m[1]);
+}
+const fragile = [...handlers].filter((h) => !fnBound.has(h)).sort();
+r.check(fragile.length === 0,
+  `每个内联处理函数都能被 window 访问（function 声明或 window.X=；脆弱 handler：${fragile.join(',') || '无'}）`);
+// 只由 const/let/var 绑定、却出现在内联 handler 里的名字，就是上面那类脆弱项，单独标注便于排查
+r.check(fragile.every((h) => lexicalBound.has(h)),
+  `脆弱 handler 均确认为「仅词法绑定」（${fragile.join(',') || '无'}）`);
+
 // ---- D. id 交叉比对 ----
 r.section('D. 控件 id 交叉比对');
 const htmlIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
