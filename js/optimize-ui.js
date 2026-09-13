@@ -85,8 +85,22 @@ function onOptEngineChange() {
   updateOptStyleHint();
 }
 
-// 输入时的实时体检：语言 + 五维命中情况
+// 输入时的实时体检：语言 + 五维命中情况。
+//
+// 防抖：index.html 的 oninput 每敲一个字符就会触发本函数，长提示词下全量 analyze()
+// 明显卡顿。这里做 250ms 防抖 —— 停手后才真正诊断，中间输入不重复计算。
+// 注意：必须保留 `function updateOptDiagnosis()` 这个名字与声明形式 ——
+// 内联 handler 通过 window 查找它，改成 const 会让 oninput 绑定整体失效。
+// 真正的诊断逻辑挪到内部函数 runOptDiagnosis。
+let _optDiagTimer = 0;
+const OPT_DIAG_DEBOUNCE_MS = 250;
+
 function updateOptDiagnosis() {
+  clearTimeout(_optDiagTimer);
+  _optDiagTimer = setTimeout(runOptDiagnosis, OPT_DIAG_DEBOUNCE_MS);
+}
+
+function runOptDiagnosis() {
   const ta = optEl('opt-input');
   const box = optEl('opt-scan');
   if (!ta || !box) return;

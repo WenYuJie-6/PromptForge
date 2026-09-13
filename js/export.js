@@ -69,13 +69,22 @@ function importAllData(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const data = JSON.parse(reader.result);
       if (!data || (typeof data.settings !== 'object' && !Array.isArray(data.history))) {
         throw new Error('不是有效的 PromptForge 备份文件');
       }
-      if (!confirm('导入将覆盖当前的历史记录与 API 设置，确定继续吗？')) return;
+      // 覆盖式导入属破坏性操作，统一走主题化弹窗：
+      // 原生 confirm 无法主题化 / 本地化，也体现不出危险色。
+      const ok = await askDialog({
+        title: '导入数据',
+        body: '导入将覆盖当前的历史记录与 API 设置，确定继续吗？',
+        confirmText: '覆盖导入',
+        cancelText: '取消',
+        danger: true,
+      });
+      if (!ok) return;
       if (Array.isArray(data.history)) {
         localStorage.setItem('pf_history', JSON.stringify(data.history.slice(0, 50)));
       }

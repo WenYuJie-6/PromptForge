@@ -179,7 +179,15 @@ async function unloadOfflineModel() {
 }
 
 async function deleteOfflineModel(modelId) {
-  if (!confirm('确定要删除该模型的本地缓存吗？需要重新下载才能使用。')) return;
+  // 删除缓存属破坏性操作，统一走主题化弹窗（原生 confirm 无法主题化/体现危险色）
+  const ok = await askDialog({
+    title: '清除模型缓存',
+    body: '确定要删除该模型的本地缓存吗？需要重新下载才能使用。',
+    confirmText: '清除',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!ok) return;
   await OfflineLLM.deleteModelCache(modelId);
   if (OfflineLLM.getCurrentModel() === modelId) {
     await OfflineLLM.unloadModel();

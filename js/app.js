@@ -828,11 +828,17 @@ function switchView(view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${view}`).classList.add('active');
 
+  // 导航激活态同步维护 aria-current：读屏用户据此知道「当前在哪个页面」。
+  // 用 setAttribute('aria-current', 'false') 而非 removeAttribute，语义等价且无副作用。
   document.querySelectorAll('.nav-item').forEach(n => {
-    n.classList.toggle('active', n.dataset.view === view);
+    const on = n.dataset.view === view;
+    n.classList.toggle('active', on);
+    n.setAttribute('aria-current', on ? 'page' : 'false');
   });
   document.querySelectorAll('.mobile-nav-btn').forEach(n => {
-    n.classList.toggle('active', n.dataset.view === view);
+    const on = n.dataset.view === view;
+    n.classList.toggle('active', on);
+    n.setAttribute('aria-current', on ? 'page' : 'false');
   });
 
   if (view === 'compare') initCompare();
@@ -939,10 +945,19 @@ function deleteHistory(id) {
   if (getSyncConfig().configured) syncNow(false); // 墓碑会同步到其他设备
 }
 
-function clearHistory() {
+async function clearHistory() {
   const h = loadHistory();
   if (h.length === 0) { toast('暂无历史记录'); return; }
-  if (!confirm(`确定清空全部 ${h.length} 条历史记录吗？此操作不可恢复。`)) return;
+  // 破坏性操作统一走主题化弹窗：原生 confirm 无法本地化/主题化，风格割裂，
+  // 且体现不出危险色。danger 让确认按钮显式变红。
+  const ok = await askDialog({
+    title: '清空全部历史记录',
+    body: `确定清空全部 <b>${h.length}</b> 条历史记录吗？此操作不可恢复。`,
+    confirmText: '清空',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!ok) return;
   const tombIds = [...new Set([...loadTombstones(), ...h.map(x => x.id)])];
   localStorage.setItem('pf_history', '[]');
   saveTombstones(tombIds);
@@ -1082,14 +1097,92 @@ function frameworkName(fw) {
   return FRAMEWORKS[fw]?.name || fw || '未知框架';
 }
 
-// Toast
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => el.classList.remove('show'), 2500);
+// ============================================================
+// Toast（队列化 + 类型 + 自适应时长）
+// 旧实现是「单一元素 + 后到覆盖先到」：连续调用时前一条还没看清就被顶掉；
+// 且固定 2.5 秒、无类型区分、无 aria-live（读屏完全不播报）。
+// 新实现同一时刻只显示一条，淡出后再出下一条。
+// 兼容性：type 默认 'info'，全项目约 100 处「只传一个参数」的旧调用无需改动。
+// ============================================================
+const TOAST_TYPES = ['info', 'success', 'error', 'warning'];
+const TOAST_DURATION_MIN = 2000;   // 最短展示（毫秒），避免短句一闪而过
+const TOAST_DURATION_MAX = 6000;   // 最长展示，避免长句霸屏
+const TOAST_FADE_MS = 320;         // 与 CSS transition(.3s) 对齐，等淡出后再出下一条
+
+let _toastQueue = [];
+let _toastShowing = false;
+
+// 按内容长度自适应展示时长：长句给足阅读时间
+function toastDuration(msg) {
+  const len = String(msg == null ? '' : msg).length;
+  return Math.min(TOAST_DURATION_MAX, Math.max(TOAST_DURATION_MIN, 1200 + len * 90));
 }
+
+function toast(msg, type) {
+  const el = document.getElementById('toast');
+  if (!el) return; // DOM 未就绪时静默返回，绝不二次抛错
+  const t = TOAST_TYPES.includes(type) ? type : 'info';
+  _toastQueue.push({ msg: String(msg == null ? '' : msg), type: t });
+  pumpToastQueue();
+}
+
+// 出队一条并展示；淡出结束再出下一条。整条链路的定时器都挂在 el._timer 上，
+// 保证连续调用不会残留多个定时器互相打架。
+function pumpToastQueue() {
+  const el = document.getElementById('toast');
+  if (!el || _toastShowing || _toastQueue.length === 0) return;
+  const item = _toastQueue.shift();
+  _toastShowing = true;
+
+  el.textContent = item.msg;
+  TOAST_TYPES.forEach((t) => el.classList.remove('toast-' + t));
+  el.classList.add('toast-' + item.type);
+  el.classList.add('show');
+
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => {
+    el.classList.remove('show');
+    // 等淡出动画结束再出下一条，否则两条提示会叠影
+    el._timer = setTimeout(() => { _toastShowing = false; pumpToastQueue(); }, TOAST_FADE_MS);
+  }, toastDuration(item.msg));
+}
+
+// ============================================================
+// 全局错误兜底：未捕获异常 / 未处理的 Promise 拒绝若无人接管，
+// 表现就是「点了没反应」或白屏 —— 用户无法自助、团队也拿不到定位线索。
+// 统一走 reportFatalError：先 console 留痕，再 toast 告知用户如何查看详情。
+// 必须节流：报错风暴下无节制弹提示会把界面刷屏，甚至让提示本身成为新的报错源。
+// toast 调用需包 try/catch：DOM 未就绪时不应二次抛错。
+// ============================================================
+const FATAL_TOAST_INTERVAL = 3000;
+let _lastFatalToastAt = 0;
+
+function reportFatalError(scope, err) {
+  // 留痕优先：控制台是定位问题的唯一一手材料
+  try { console.error('[' + scope + ']', err); } catch {}
+
+  const now = Date.now();
+  if (now - _lastFatalToastAt < FATAL_TOAST_INTERVAL) return; // 节流
+  _lastFatalToastAt = now;
+
+  const msg = (err && err.message) || String(err);
+  try {
+    toast('应用出现问题：' + msg + '（按 F12 打开控制台查看详情）', 'error');
+  } catch (e) {
+    // toast 自身失败时不能再抛出，否则会与全局 handler 形成递归
+    try { console.error('toast 调用失败：', e); } catch {}
+  }
+}
+
+window.addEventListener('error', (e) => {
+  // 资源加载失败（img/script 404）也会触发 error，但没有 error 对象；
+  // 这不是代码缺陷，不打扰用户。
+  if (!e || (!e.error && !e.message)) return;
+  reportFatalError('未捕获异常', e.error || e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  reportFatalError('未处理的 Promise 拒绝', e && e.reason);
+});
 
 const HTML_ESCAPE_MAP = {
   '&': '&amp;',
@@ -1136,27 +1229,89 @@ function registerServiceWorker() {
 }
 
 // 通用弹窗（替代 confirm）：返回 Promise<boolean>
+//
+// 无障碍要点（它是全站破坏性操作的必经关卡，缺一不可）：
+//   · role=dialog + aria-modal：读屏知道这是模态对话框并屏蔽背后内容
+//   · aria-labelledby 指向标题：打开时先朗读标题
+//   · 打开即把焦点移入弹窗（默认落到「取消」，破坏性操作尤其重要）
+//   · Tab / Shift+Tab 焦点陷阱：焦点不会跑回背后的页面
+//   · Esc 关闭（等价于取消）
+//   · 关闭后把焦点还原到打开前的触发元素
+let _dialogSeq = 0;
+
 function askDialog(opts) {
   return new Promise((resolve) => {
     const { title, body, confirmText = '确定', cancelText = '取消', danger = false } = opts || {};
+    // 记录打开前的焦点，关闭后还原（触发元素可能已被移除，需容错）
+    const prevFocus = document.activeElement;
+    const titleId = 'askdialog-title-' + (++_dialogSeq);
+
     const wrap = document.createElement('div');
     wrap.className = 'modal';
+    // 用 setAttribute 而非 innerHTML 属性串：语义属性与内容分离，便于静态校验与维护
+    wrap.setAttribute('role', 'dialog');
+    wrap.setAttribute('aria-modal', 'true');
+    wrap.setAttribute('aria-labelledby', titleId);
     wrap.innerHTML = `
       <div class="modal-box modal-box-left">
-        <h3>${escapeHTML(title || '')}</h3>
+        <h3 id="${titleId}">${escapeHTML(title || '')}</h3>
         <div class="modal-body" style="text-align:left;font-size:.9rem;line-height:1.7;color:var(--text2);margin:.6rem 0 1.2rem">${body || ''}</div>
         <div class="row" style="justify-content:flex-end">
           <button class="btn btn-ghost btn-sm" data-a="cancel">${escapeHTML(cancelText)}</button>
           <button class="btn ${danger ? 'btn-danger' : 'btn-primary'} btn-sm" data-a="ok">${escapeHTML(confirmText)}</button>
         </div>
       </div>`;
-    const close = (v) => { wrap.remove(); resolve(v); };
+
+    const restoreFocus = () => {
+      try { if (prevFocus && typeof prevFocus.focus === 'function') prevFocus.focus(); } catch {}
+    };
+
+    const close = (v) => {
+      wrap.removeEventListener('keydown', onKeydown);
+      wrap.remove();
+      restoreFocus();
+      resolve(v);
+    };
+
+    // 弹窗内可聚焦元素（供 Tab 循环使用）
+    const focusables = () => Array.prototype.slice
+      .call(wrap.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter((el) => !el.disabled);
+
+    const onKeydown = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); return; } // Esc = 取消
+      if (e.key !== 'Tab') return;
+      // 焦点陷阱：在弹窗首尾之间循环，不让焦点逃到背后的页面
+      const list = focusables();
+      if (!list.length) { e.preventDefault(); return; }
+      const first = list[0];
+      const last = list[list.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !wrap.contains(active)) { e.preventDefault(); last.focus(); }
+      } else if (active === last) {
+        e.preventDefault(); first.focus();
+      }
+    };
+
     wrap.addEventListener('click', (e) => {
       if (e.target === wrap) close(false);
       const a = e.target.closest('[data-a]');
       if (a) close(a.dataset.a === 'ok');
     });
+    wrap.addEventListener('keydown', onKeydown);
+
     document.body.appendChild(wrap);
+
+    // 初始焦点落在「取消」：破坏性操作用户最可能想反悔，先给安全选项。
+    // 找不到取消按钮时回落到弹窗内最后一个可聚焦元素。
+    try {
+      const btns = wrap.querySelectorAll('button');
+      let target = null;
+      for (const b of btns) { if (b.getAttribute('data-a') === 'cancel') { target = b; break; } }
+      if (!target && btns.length) target = btns[btns.length - 1];
+      if (target) target.focus();
+    } catch {}
   });
 }
 

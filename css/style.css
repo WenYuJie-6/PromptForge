@@ -572,3 +572,43 @@ body[data-mode="light"] .modal{background:rgba(246,240,226,.72)}
 body[data-mode="light"] #toast{background:var(--s3);border-color:var(--border)}
 body[data-mode="light"] .output-area pre{background:rgba(120,105,80,.08)}
 body[data-mode="light"] .help-table th{background:var(--s2)}
+
+/* ============================================================
+   无障碍（P0）：Toast 类型配色变体
+   四种类型仅通过边框色区分，不改布局；用 #toast.toast-* 保证不与应用既有规则打架。
+   注意：上方浅色模式的 `body[data-mode="light"] #toast` 特异性比本块更高，
+   会覆盖类型色；因此浅色模式必须显式再声明一遍，否则日间模式下类型色会被抹掉。
+   ============================================================ */
+#toast.toast-info{border-color:var(--info)}
+#toast.toast-success{border-color:var(--accent)}
+#toast.toast-warning{border-color:var(--warning)}
+#toast.toast-error{border-color:var(--danger)}
+body[data-mode="light"] #toast.toast-info{border-color:var(--info)}
+body[data-mode="light"] #toast.toast-success{border-color:var(--accent)}
+body[data-mode="light"] #toast.toast-warning{border-color:var(--warning)}
+body[data-mode="light"] #toast.toast-error{border-color:var(--danger)}
+
+/* ============================================================
+   无障碍（P0）：键盘焦点可见（WCAG 2.4.7）
+   全项目此前只有 3 处 :focus（鼠标点击也会留下焦点环），键盘用户几乎看不到焦点在哪。
+   改用 :focus-visible —— 只有键盘 / 辅助设备聚焦时才显示，鼠标点击不出现焦点环。
+   颜色复用已有设计令牌 --accent，保证与主题一致。
+   ============================================================ */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ============================================================
+   无障碍（P0）：尊重系统「减少动态效果」设置（WCAG 2.3.3）
+   本页有 6 组 @keyframes 与 24 处 transition（含背景光斑动效），
+   但此前 0 处响应该系统设置 —— 前庭功能敏感用户无法关闭动效。
+   用通配 + !important 覆盖全部既有声明；只归零时长/次数、不删除 animation，
+   以保留动画终态，避免依赖动画终态的布局塌陷。
+   本块放在文件末尾，且不改动上方 @media print 规则。
+   ============================================================ */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+    scroll-behavior:auto !important;
+  }
+}

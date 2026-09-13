@@ -477,13 +477,22 @@ window.saveLocalSettings = function() {
 };
 
 // 添加模型管理功能
-window.manageLocalModels = function() {
+window.manageLocalModels = async function() {
   const selectedModel = document.getElementById('set-local-model').value;
   const modelInfo = localModelManager.modelInfo[selectedModel];
-  
+
   if (!modelInfo) return;
-  
-  if (confirm(`确定要删除 ${modelInfo.name} 的缓存吗？这将释放 ${modelInfo.size} 存储空间。`)) {
+
+  // 删除缓存属破坏性操作，统一走主题化弹窗；名称/体积来自模型元数据，仍经 escapeHTML 防注入
+  const ok = await askDialog({
+    title: '删除模型缓存',
+    body: `确定要删除 <b>${escapeHTML(String(modelInfo.name))}</b> 的缓存吗？`
+      + `这将释放 ${escapeHTML(String(modelInfo.size))} 存储空间。`,
+    confirmText: '删除',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (ok) {
     localModelManager.deleteModelCache(selectedModel);
   }
 };

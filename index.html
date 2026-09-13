@@ -34,7 +34,7 @@
     <button class="nav-item" id="download-desktop-btn" onclick="downloadDesktopInstaller()" title="下载 Windows 桌面版安装包"><span class="nav-icon">⬇</span>下载桌面版</button>
 
     <div class="mode-toggle-wrap">
-      <button class="mode-toggle" id="mode-toggle" onclick="toggleMode()" title="切换日间 / 夜间模式">
+      <button class="mode-toggle" id="mode-toggle" onclick="toggleMode()" aria-label="切换日间 / 夜间模式" title="切换日间 / 夜间模式">
         <span class="mode-knob"></span>
       </button>
       <span class="mode-label" id="mode-label">夜间</span>
@@ -276,21 +276,21 @@
 
       <div id="online-settings">
         <div class="setting-group">
-          <label>API 端点</label>
+          <label for="set-endpoint">API 端点</label>
           <input type="text" id="set-endpoint" placeholder="https://api.deepseek.com/v1">
           <div class="hint">OpenAI 兼容格式的 API 地址</div>
         </div>
         <div class="setting-group">
-          <label>API 密钥</label>
+          <label for="set-key">API 密钥</label>
           <input type="password" id="set-key" placeholder="sk-...">
           <div class="hint">本地 Ollama 可留空</div>
         </div>
         <div class="setting-group">
-          <label>模型名称</label>
+          <label for="set-model">模型名称</label>
           <input type="text" id="set-model" placeholder="deepseek-chat">
         </div>
         <div class="setting-group">
-          <label>优化语言</label>
+          <label for="set-lang">优化语言</label>
           <select id="set-lang">
             <option value="zh">中文</option>
             <option value="en">English</option>
@@ -299,7 +299,7 @@
         </div>
 
         <div class="setting-group">
-          <label>追问灵敏度</label>
+          <label for="set-sensitivity">追问灵敏度</label>
           <select id="set-sensitivity">
             <option value="high">高（缺少 1 个维度即追问）</option>
             <option value="medium" selected>中（缺少 2 个维度追问）</option>
@@ -319,7 +319,7 @@
 
           <!-- 引擎切换 -->
           <div class="setting-group">
-            <label>生成引擎</label>
+            <label for="set-engine">生成引擎</label>
             <select id="set-engine" onchange="onEngineChange(this.value)">
               <option value="online">在线（内置服务 / 你的 API）</option>
               <option value="offline">离线（本地模型）</option>
@@ -356,7 +356,7 @@
       </div>
 
       <div class="setting-group">
-        <label>软件更新源地址（可选）</label>
+        <label for="set-update-url">软件更新源地址（可选）</label>
         <input type="text" id="set-update-url" placeholder="https://你的站点/promptforge">
         <div class="hint">客户端会读取该地址下的 <span class="mono">version.json</span> 检测新版本，发现后自动下载并安装。发布包里的 <span class="mono">release/version.json</span> 与网页端共用同一份，填网页端的访问地址即可让两端版本始终一致。</div>
         <div class="hint">留空则只从本地更新文件夹读取（离线也能更新，见下方按钮）。</div>
@@ -379,7 +379,7 @@
       </div>
 
       <div class="setting-group">
-        <label>云同步（可选 · 多端自动同步）</label>
+        <label for="set-sb-url">云同步（可选 · 多端自动同步）</label>
         <input type="text" id="set-sb-url" placeholder="https://xxxx.supabase.co">
         <div class="hint">Supabase 项目 URL（Dashboard → Settings → API）</div>
         <input type="password" id="set-sb-key" class="mt-sm" placeholder="anon public key">
@@ -434,12 +434,12 @@
       <div class="step-card">
         <div class="step-label">主题色</div>
         <div class="swatch-row" id="accent-swatches">
-          <button class="swatch" data-accent="#4ade80" style="background:#4ade80" title="松石绿" onclick="setAccent('#4ade80')"></button>
-          <button class="swatch" data-accent="#60a5fa" style="background:#60a5fa" title="晴空蓝" onclick="setAccent('#60a5fa')"></button>
-          <button class="swatch" data-accent="#a78bfa" style="background:#a78bfa" title="暮云紫" onclick="setAccent('#a78bfa')"></button>
-          <button class="swatch" data-accent="#f472b6" style="background:#f472b6" title="樱粉" onclick="setAccent('#f472b6')"></button>
-          <button class="swatch" data-accent="#fb923c" style="background:#fb923c" title="暖橙" onclick="setAccent('#fb923c')"></button>
-          <button class="swatch" data-accent="#22d3ee" style="background:#22d3ee" title="湖蓝" onclick="setAccent('#22d3ee')"></button>
+          <button class="swatch" data-accent="#4ade80" style="background:#4ade80" aria-label="松石绿" title="松石绿" onclick="setAccent('#4ade80')"></button>
+          <button class="swatch" data-accent="#60a5fa" style="background:#60a5fa" aria-label="晴空蓝" title="晴空蓝" onclick="setAccent('#60a5fa')"></button>
+          <button class="swatch" data-accent="#a78bfa" style="background:#a78bfa" aria-label="暮云紫" title="暮云紫" onclick="setAccent('#a78bfa')"></button>
+          <button class="swatch" data-accent="#f472b6" style="background:#f472b6" aria-label="樱粉" title="樱粉" onclick="setAccent('#f472b6')"></button>
+          <button class="swatch" data-accent="#fb923c" style="background:#fb923c" aria-label="暖橙" title="暖橙" onclick="setAccent('#fb923c')"></button>
+          <button class="swatch" data-accent="#22d3ee" style="background:#22d3ee" aria-label="湖蓝" title="湖蓝" onclick="setAccent('#22d3ee')"></button>
         </div>
         <div class="hint swatch-custom">自定义颜色：<input type="color" id="custom-accent" value="#4ade80" onchange="setAccent(this.value)"></div>
       </div>
@@ -447,20 +447,20 @@
       <div class="step-card">
         <div class="step-label">界面字体</div>
         <div class="font-options" id="font-options">
-          <button class="font-option" data-font="serif" onclick="setFont('serif')"><b>衬线雅致</b><span>默认 · 温润书卷气</span></button>
-          <button class="font-option" data-font="sans" onclick="setFont('sans')"><b>无衬线清爽</b><span>现代 · 屏幕更利落</span></button>
-          <button class="font-option" data-font="mono" onclick="setFont('mono')"><b>等宽极客</b><span>代码感 · 终端风</span></button>
+          <button class="font-option" data-font="serif" aria-label="界面字体：衬线雅致" onclick="setFont('serif')"><b>衬线雅致</b><span>默认 · 温润书卷气</span></button>
+          <button class="font-option" data-font="sans" aria-label="界面字体：无衬线清爽" onclick="setFont('sans')"><b>无衬线清爽</b><span>现代 · 屏幕更利落</span></button>
+          <button class="font-option" data-font="mono" aria-label="界面字体：等宽极客" onclick="setFont('mono')"><b>等宽极客</b><span>代码感 · 终端风</span></button>
         </div>
       </div>
 
       <div class="step-card">
         <div class="step-label">背景氛围</div>
         <div class="bg-options" id="bg-options">
-          <button class="bg-option" data-bg="night" onclick="setBackground('night')"><span class="bg-dot" style="background:linear-gradient(120deg,#08090d,#14532d)"></span><b>深邃夜色</b><span>默认</span></button>
-          <button class="bg-option" data-bg="forest" onclick="setBackground('forest')"><span class="bg-dot" style="background:linear-gradient(120deg,#07110c,#166534)"></span><b>林间墨绿</b><span>静谧苔色</span></button>
-          <button class="bg-option" data-bg="ocean" onclick="setBackground('ocean')"><span class="bg-dot" style="background:linear-gradient(120deg,#070d14,#1e40af)"></span><b>深海湛蓝</b><span>冷冽通透</span></button>
-          <button class="bg-option" data-bg="purple" onclick="setBackground('purple')"><span class="bg-dot" style="background:linear-gradient(120deg,#0d0a14,#6d28d9)"></span><b>暮云紫夜</b><span>神秘浪漫</span></button>
-          <button class="bg-option" data-bg="ember" onclick="setBackground('ember')"><span class="bg-dot" style="background:linear-gradient(120deg,#140c07,#c2410c)"></span><b>余烬暖光</b><span>温暖黄昏</span></button>
+          <button class="bg-option" data-bg="night" aria-label="背景氛围：深邃夜色" onclick="setBackground('night')"><span class="bg-dot" style="background:linear-gradient(120deg,#08090d,#14532d)"></span><b>深邃夜色</b><span>默认</span></button>
+          <button class="bg-option" data-bg="forest" aria-label="背景氛围：林间墨绿" onclick="setBackground('forest')"><span class="bg-dot" style="background:linear-gradient(120deg,#07110c,#166534)"></span><b>林间墨绿</b><span>静谧苔色</span></button>
+          <button class="bg-option" data-bg="ocean" aria-label="背景氛围：深海湛蓝" onclick="setBackground('ocean')"><span class="bg-dot" style="background:linear-gradient(120deg,#070d14,#1e40af)"></span><b>深海湛蓝</b><span>冷冽通透</span></button>
+          <button class="bg-option" data-bg="purple" aria-label="背景氛围：暮云紫夜" onclick="setBackground('purple')"><span class="bg-dot" style="background:linear-gradient(120deg,#0d0a14,#6d28d9)"></span><b>暮云紫夜</b><span>神秘浪漫</span></button>
+          <button class="bg-option" data-bg="ember" aria-label="背景氛围：余烬暖光" onclick="setBackground('ember')"><span class="bg-dot" style="background:linear-gradient(120deg,#140c07,#c2410c)"></span><b>余烬暖光</b><span>温暖黄昏</span></button>
         </div>
       </div>
 
@@ -561,14 +561,14 @@
 
 <!-- Mobile Nav -->
 <div id="mobile-nav">
-  <button class="mobile-nav-btn active" data-view="new"><span>✦</span>新建</button>
-  <button class="mobile-nav-btn" data-view="optimize"><span>⚡</span>精修</button>
-  <button class="mobile-nav-btn" data-view="templates"><span>◈</span>模板</button>
-  <button class="mobile-nav-btn" data-view="compare"><span>⇄</span>对比</button>
-  <button class="mobile-nav-btn" data-view="history"><span>◷</span>历史</button>
-  <button class="mobile-nav-btn" data-view="settings"><span>⚙</span>设置</button>
-  <button class="mobile-nav-btn" data-view="personalize"><span>🎨</span>个性</button>
-  <button class="mobile-nav-btn" data-view="help"><span>?</span>帮助</button>
+  <button class="mobile-nav-btn active" data-view="new" aria-label="新建优化"><span>✦</span>新建</button>
+  <button class="mobile-nav-btn" data-view="optimize" aria-label="提示词优化"><span>⚡</span>精修</button>
+  <button class="mobile-nav-btn" data-view="templates" aria-label="模板库"><span>◈</span>模板</button>
+  <button class="mobile-nav-btn" data-view="compare" aria-label="框架对比"><span>⇄</span>对比</button>
+  <button class="mobile-nav-btn" data-view="history" aria-label="历史记录"><span>◷</span>历史</button>
+  <button class="mobile-nav-btn" data-view="settings" aria-label="设置"><span>⚙</span>设置</button>
+  <button class="mobile-nav-btn" data-view="personalize" aria-label="个性化"><span>🎨</span>个性</button>
+  <button class="mobile-nav-btn" data-view="help" aria-label="帮助与模型使用"><span>?</span>帮助</button>
 </div>
 
 <!-- QR Modal -->
@@ -607,8 +607,9 @@ create policy "pf_anon_all" on public.pf_records
   </div>
 </div>
 
-<!-- Toast -->
-<div id="toast"></div>
+<!-- Toast：role=status + aria-live=polite 让读屏在内容变化时自动播报；
+     aria-atomic=true 保证整条消息被完整朗读，而不是只读变化片段。 -->
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- 自描述部署根地址：任何加载本页的上下文（HTTP 部署、桌面端内置静态服务、二次分发的
      便携包）都能在运行时算出自己的更新源，不必依赖发布者预先填写 updateUrl。

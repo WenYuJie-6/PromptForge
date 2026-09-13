@@ -14,6 +14,7 @@ const suites = [
   ['check-model-derivation', '.workbuddy/check-model-derivation.mjs'],
   ['check-settings-cache', '.workbuddy/check-settings-cache.mjs'],
   ['check-xss-and-styles', '.workbuddy/check-xss-and-styles.mjs'],
+  ['check-a11y-static', '.workbuddy/check-a11y-static.mjs'],
   ['verify:update', 'scripts/verify-update-chain.mjs'],
 ];
 
