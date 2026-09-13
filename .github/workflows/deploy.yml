@@ -52,11 +52,12 @@ jobs:
         run: node scripts/fix-ps-encoding.mjs assets-templates/启动.ps1 assets-templates/启动.bat
 
       # 把 Pages 地址注入根 version.json（发布时随清单下发给所有客户端）
-      - name: Inject GitHub Pages update URL
+           - name: Inject GitHub Pages update URL
         shell: bash
         run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
           repo_lc=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-          url="https://${{ github.repository_owner }}.github.io/${repo_lc}/"
+          url="https://${owner}.github.io/${repo_lc}/"
           node -e 'const fs=require("fs");const p="version.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.updateUrl=process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");' "$url"
           echo "updateUrl -> $url"
 
