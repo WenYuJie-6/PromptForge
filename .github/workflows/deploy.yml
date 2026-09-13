@@ -1,13 +1,17 @@
 name: Deploy to GitHub Pages
 
 # 构建并发布到 GitHub Pages。
-# 关键点（与“桌面端自动更新”直接相关）：
-#   1. 必须在 Windows 上完整构建 Tauri（产出真实安装包 .exe），
-#      否则 pages 上只有前端、没有安装包，旧客户端永远收不到完整更新。
-#   2. 构建前把 GitHub Pages 地址写进根 version.json 的 updateUrl，
-#      这样打进安装包的 dist-app/version.json（由 write-version 桥接）也会带上更新源，
-#      已安装客户端才能从 Pages 拉到新版本（否则它只会拿自己 127.0.0.1 的本地清单）。
-#   3. 启动器 .ps1/.bat 强制 UTF-8 BOM + CRLF，避免 Windows PowerShell 5.1 按 GBK 解码报错。
+#
+# 关键点（与「桌面端自动更新」直接相关）：
+#   1. sync:dist 必须跑在 tauri-build 之前。
+#      tauri-build.mjs 的第一步是 `cargo build --release`，而 tauri.conf.json 的
+#      frontendDist 指向 ../dist-app —— 该目录被 .gitignore 排除，全新 checkout 时不存在，
+#      cargo 会在编译期 panic（lib.rs 的 tauri::context! 宏读不到前端资源）。
+#      实测：移走 dist-app/ 后 cargo check 直接 exit 101。
+#   2. 必须先构建 Tauri（产出真实 .exe），否则 Pages 上只有前端、没有安装包。
+#   3. 构建前把 Pages 地址写进根 version.json 的 updateUrl，这样打进安装包的
+#      dist-app/version.json 也会带上更新源，已装客户端才能从 Pages 拉到新版本。
+#   4. 启动器 .ps1/.bat 强制 UTF-8 BOM + CRLF，避免 Windows PowerShell 5.1 按 GBK 解码报错。
 
 on:
   push:
@@ -51,18 +55,26 @@ jobs:
       - name: Ensure launcher scripts are UTF-8 BOM + CRLF
         run: node scripts/fix-ps-encoding.mjs assets-templates/启动.ps1 assets-templates/启动.bat
 
-      # 把 Pages 地址注入根 version.json（发布时随清单下发给所有客户端）
-           - name: Inject GitHub Pages update URL
+      # 把 Pages 地址注入根 version.json（发布时随清单下发给所有客户端）。
+      # 用 GITHUB_REPOSITORY（形如 owner/repo）而非 github.event.repository.name：
+      # 后者在 workflow_dispatch 触发时可能为空，会静默写成 https://user.github.io// 这种畸形地址。
+      # 仓库名保持原样（不转小写）：GitHub Pages 的 /<repo>/ 路径按仓库名原样解析。
+      - name: Inject GitHub Pages update URL
         shell: bash
         run: |
-          owner="${GITHUB_REPOSITORY%%/*}"
-          repo_lc=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-          url="https://${owner}.github.io/${repo_lc}/"
-          node -e 'const fs=require("fs");const p="version.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.updateUrl=process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");' "$url"
+          repo="${GITHUB_REPOSITORY#*/}"
+          url="https://${{ github.repository_owner }}.github.io/${repo}/"
+          node scripts/inject-pages-url.mjs "$url"
           echo "updateUrl -> $url"
 
       - name: Install npm deps (@tauri-apps/cli)
         run: npm install
+
+      # 生成 dist-app/ 与 dist/ —— cargo build 的编译期前置条件（见文件头第 1 条）。
+      # 此时 release/version.json 尚不存在，write-version 会降级为「无 windows 字段」，
+      # 随后 build-release 产出真正的清单，末尾再跑一次 sync:dist 把它们桥接进 dist/。
+      - name: Prepare frontend (dist-app + dist)
+        run: npm run sync:dist
 
       - name: Build Tauri app (cargo + NSIS/MSI bundle)
         run: node scripts/tauri-build.mjs
@@ -70,8 +82,14 @@ jobs:
       - name: Build release package (version.json + installer + web-update)
         run: node scripts/build-release.mjs
 
+      # 最终 dist/version.json：此时 release/version.json 已存在，write-version 能桥接 windows 字段。
+      # 同时把带 windows 的清单回填给 dist-app/version.json（见 sync-dist.mjs 的桥接逻辑），
+      # 保证装好的客户端从自己安装目录就能拿到完整清单，不依赖联网。
       - name: Sync dist (final dist/version.json with windows + updateUrl)
         run: npm run sync:dist
+
+      - name: Verify update chain
+        run: node scripts/verify-update-chain.mjs
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

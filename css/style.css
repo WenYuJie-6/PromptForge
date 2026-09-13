@@ -370,21 +370,6 @@ input:checked+.slider:before{transform:translateX(20px)}
   font-family: var(--font-display);
 }
 
-/* 导航栏安装应用按钮 */
-#pwa-menu-btn {
-  color: var(--text2);
-  transition: all 0.2s ease;
-}
-
-#pwa-menu-btn:hover {
-  color: var(--accent);
-  background: var(--accent-dim);
-}
-
-#pwa-menu-btn.active {
-  color: var(--accent);
-  background: var(--accent-dim);
-}
 
 /* PWA 安装提示样式 */
 .install-toast {

@@ -15,7 +15,15 @@ Latest-Setup.exe
 Latest.msi
 
 # ---- 本地工具与临时文件 ----
-.workbuddy/
+# 注意：.workbuddy/ 同时容纳两类完全不同的东西，不能整目录忽略：
+#   1) 校验脚本（*.mjs/*.ps1/*.js）—— 是项目质量防护网，必须进版本控制，
+#      否则一旦本地丢失就无从恢复（曾发生：9 个校验脚本整体丢失、回收站无备份）。
+#   2) memory/ 与 *.txt 等运行产物 —— 只属于本机，应排除。
+# 采用「先全忽略、再白名单放行脚本」的写法。
+.workbuddy/*
+!.workbuddy/*.mjs
+!.workbuddy/*.js
+!.workbuddy/*.ps1
 *.log
 npm-debug.log*
 

@@ -241,7 +241,9 @@ const StyleVariants = (() => {
     return '';
   }
 
-  function getStyles() { return STYLES.slice(); }
+  // 返回副本：不仅要换数组，元素也要拷贝 —— 只 slice() 的话元素仍是共享引用，
+  // 调用方 `getStyles()[0].zh = x` 会就地污染全局元数据，影响所有使用方。
+  function getStyles() { return STYLES.map((s) => ({ ...s })); }
 
   function isKnownStyle(key) { return STYLES.some((x) => x.key === key); }
 

@@ -1142,41 +1142,6 @@ function askDialog(opts) {
 }
 
 // PWA 安装入口：直接唤起安装，失败再给具体引导
-// 旧实现只调 checkInstallAvailability() → 弹一个 5 秒自动消失的浮动按钮，
-// 从不调用 prompt()，所以用户点了「安装应用」看起来毫无反应。
-async function showPWAInstallMenu() {
-  if (isDesktopApp) { toast('你使用的已经是桌面版，无需再安装'); return; }
-  if (typeof PWAInstaller === 'undefined') { toast('安装功能未就绪，请刷新页面重试'); return; }
-
-  if (PWAInstaller.isInstalled()) {
-    const go = await askDialog({
-      title: 'PromptForge 已安装',
-      body: '检测到你已经在桌面/主屏幕上安装了 PromptForge。'
-        + '<br>如果想重新安装或遇到问题，可以到「设置」页面最底部选择「移除已安装的应用」。',
-      confirmText: '去设置',
-      cancelText: '知道了',
-    });
-    if (go) switchView('settings');
-    return;
-  }
-
-  toast('正在唤起安装…');
-  const res = await PWAInstaller.install();
-
-  if (res.ok) { toast('安装成功！可从桌面/主屏幕打开'); return; }
-
-  // 浏览器没给安装事件时，给出针对当前环境的具体步骤
-  const hint = PWAInstaller.getInstallHint();
-  const steps = (hint.steps || []).map((s, i) => `<li style="margin:.3rem 0">${i + 1}. ${escapeHTML(s)}</li>`).join('');
-  await askDialog({
-    title: hint.title,
-    body: `当前浏览器没有把安装入口交给网页（代码：${escapeHTML(res.reason || 'unavailable')}）。按下面步骤手动完成：`
-      + `<ol style="margin:.5rem 0 0;padding-left:1.2rem">${steps}</ol>`
-      + `<br><br><span style="color:var(--text3);font-size:.8rem">更可靠的方案：直接下载桌面版（侧边栏「下载桌面版」按钮），双击安装到电脑。</span>`,
-    confirmText: '知道了',
-    cancelText: '关闭',
-  });
-}
 
 // 移除已安装的网页应用（设置页底部入口）
 async function uninstallWebApp() {
@@ -1620,8 +1585,7 @@ function initPlatformMenu() {
     if (el) el.classList.add('hidden');
   };
   if (isDesktopApp) {
-    // 桌面端本身就是安装好的程序，「安装应用」毫无意义；「下载桌面版」无意义
-    hide('pwa-menu-btn');
+    // 桌面端本身就是安装好的程序，「下载桌面版」无意义
     hide('download-desktop-btn');
   } else {
     // 网页端没有客户端可更新，「检查更新」点了只会报"仅桌面版支持"
@@ -1652,7 +1616,8 @@ function initPlatformMenu() {
 // 下载桌面版安装包。
 //
 // 设计目标：与主流软件一致 —— 点一下就下载，不弹选择框、不做任何询问。
-// 安装包固定为 Latest-Setup.exe（与 index.html 同目录），由 sync-dist 同步进 dist/。
+// 安装包固定为 Latest-Setup.exe，下载地址 = 更新源（或本页部署基址）+ /Latest-Setup.exe，
+// 由 sync-dist 同步进 dist/。用绝对地址而非相对路径，才能在任何静态托管（如 GitHub Pages）上正确解析。
 //
 // 为什么原来是"探测 + 弹窗 + 让用户选格式"，现在要拆掉：
 //   1. 探测一段用了 HEAD / Range GET，在 file:// 与部分静态托管下必然抛异常，
@@ -1670,8 +1635,21 @@ function initPlatformMenu() {
 async function downloadDesktopInstaller() {
   if (isDesktopApp) { toast('你使用的已经是桌面版'); return; }
 
-  const TARGET = 'Latest-Setup.exe';       // 与 sync-dist 写入 dist/ 的文件名一致
   const SAVE_AS = 'PromptForge-Setup.exe'; // 保存到本地的文件名，带产品名便于识别
+
+  // 拼出「完整下载地址」：优先用用户设置的更新源 / 本页服务器根地址
+  // （如在 GitHub Pages 上就是 https://<用户>.github.io/promptforge），再退回清单里的 updateUrl。
+  // 这样按钮在任意静态托管上点一下就下载 https://<部署地址>/Latest-Setup.exe，
+  // 不再依赖「页面与 exe 同目录」的相对解析（那种写法在 file:// 下必然失效）。
+  //
+  // file:// 下不做这步：此时 PF_DEPLOY_BASE 为空，resolveUpdateBaseUrl 会去 fetch('version.json')
+  // ——file:// 被视为独立 origin，该请求必然失败（虽被 catch 吞掉，但纯属浪费且在语义上不该联网）。
+  let base = '';
+  if (location.protocol !== 'file:') {
+    base = getUpdateBaseUrl() || window.PF_DEPLOY_BASE || '';
+    if (!base) base = await resolveUpdateBaseUrl();
+  }
+  const TARGET = (base ? base.replace(/\/+$/, '') + '/' : '') + 'Latest-Setup.exe';
 
   // file://：浏览器协议层面不支持脚本触发下载，这是无法用代码绕过的限制。
   // 唯一的「点一下就能用」出路是双击 启动.bat：在 127.0.0.1 起一个本地静态服务，

@@ -25,8 +25,6 @@ const PWAInstaller = (() => {
       e.preventDefault();
       deferredPrompt = e;
       
-      // 显示安装按钮
-      showInstallButton();
       
       console.log('PWA 安装提示已准备');
     });
@@ -46,7 +44,6 @@ const PWAInstaller = (() => {
     checkServiceWorkerStatus();
   }
 
-  // 显示安装按钮
   function showInstallButton() {
     // 在主界面添加安装按钮
     const installBtn = document.createElement('button');

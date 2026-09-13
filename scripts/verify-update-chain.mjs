@@ -1,7 +1,7 @@
 // 端到端验证「更新链路」：模拟客户端 check_update 的判定逻辑，
 // 确认当前产物真的能让用户看到更新，而不是again显示「最新版本」。
 // 用法：node scripts/verify-update-chain.mjs
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -228,6 +228,10 @@ if (failed) {
 }
 P('[verify] 全部通过：客户端在旧版本上会看到更新提示，安装包可下载。');
 
-const { writeFileSync } = await import('node:fs');
-writeFileSync(join(root, '.workbuddy', 'verify-update-chain.txt'), out.join('\n') + '\n', 'utf8');
+// 落盘一份 txt 存档，便于人工核对。
+// 注意 .workbuddy/ 被 .gitignore 排除，CI 全新 checkout 时并不存在 —— 必须先建目录，
+// 否则这一步会 ENOENT 让整条 CI 失败（校验本身已经跑完，失败得毫无意义）。
+const logDir = join(root, '.workbuddy');
+if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+writeFileSync(join(logDir, 'verify-update-chain.txt'), out.join('\n') + '\n', 'utf8');
 console.log(out.join('\n'));

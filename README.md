@@ -216,13 +216,15 @@ npm run bump 0.2.0    # 自动同步到 package.json / tauri.conf.json / Cargo.t
 │   ├── write-version.mjs # 桥接清单字段到 dist/version.json
 │   └── verify-update-chain.mjs  # 复刻客户端判定逻辑做端到端校验
 ├── .workbuddy/           # 开发期校验脚本（不参与打包）
-│   ├── run-all-checks.mjs          # 统一跑全部套件
+│   ├── _check-lib.mjs              # 共享库：vm 沙盒（极简 DOM）+ 断言 + 统一输出
+│   ├── run-all-checks.mjs          # 统一跑全部套件（失败判定：退出码 或 行首 FAIL）
 │   ├── check-frameworks.mjs        # 框架 / 模板定义完整性
 │   ├── check-styles.mjs            # 6 种版式输出特征
 │   ├── check-ui-wiring.mjs         # index.html 控件 id 与 JS 引用对应
-│   ├── check-download-ux.mjs       # 下载安装包交互（5 种环境）
+│   ├── check-download-ux.mjs       # 下载安装包交互（多种部署环境真跑）
+│   ├── check-update-chain.mjs      # 更新链路 + CI 顺序/注入的回归护栏
 │   ├── check-model-metadata.mjs    # 模型清单唯一数据源
-│   ├── check-model-derivation.mjs  # 沙盒真跑，验证派生一致
+│   ├── check-model-derivation.mjs  # 沙盒真跑 17 个脚本，验证派生一致
 │   ├── check-settings-cache.mjs    # 设置缓存命中 / 失效 / 副本隔离
 │   └── check-xss-and-styles.mjs    # XSS 注入面 + 样式幂等注入
 ├── service.json          # 内置在线服务配置（enabled 后新装用户免配置）

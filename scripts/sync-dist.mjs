@@ -57,8 +57,16 @@ for (const item of copyItems) {
 // 指向真正的分发源，客户端据此联网检测；即使更新源地址为空的便携部署，
 // 客户端也能靠"自己所在目录的清单"完成比对并发现版本落后。
 //
-// windows/web 字段此时还不知道（安装包尚未产出），由后续 write-version.mjs
-// 在 dist/ 里补齐并桥接；这里先给出 version/notes/publishedAt 与透传的 updateUrl。
+// windows/web 字段：首次 sync（tauri build 之前）时安装包尚未产出，这里拿不到；
+// 但**发布链路末尾还会再跑一次 sync-dist**，那时 release/version.json 已由 build-release 生成，
+// 于是可以把 windows/web 一并桥接进来 —— 这一点很关键：
+//
+//   安装包内嵌的 dist-app/version.json 是「客户端出生时的清单」。它若缺 windows 字段，
+//   客户端就只能靠联网拿 dist/version.json；一旦断网或 updateUrl 失效，就会退化成
+//   「已是最新版本」（本项目反复出现的那类故障）。补上桥接后，客户端从自己安装目录
+//   就能拿到完整清单，不依赖联网。
+//
+// 只采纳与当前版本号一致的 release 清单，且核实文件真实存在，避免陈旧清单污染。
 const appManifest = {
   version: V,
   notes: metaAll.notes || '',
@@ -67,6 +75,41 @@ const appManifest = {
 for (const k of ['updateUrl', 'internalLatest', 'minAppVersion']) {
   if (metaAll[k]) appManifest[k] = metaAll[k];
 }
+try {
+  const rp = resolve(root, 'release/version.json');
+  if (existsSync(rp)) {
+    const rel = JSON.parse(readFileSync(rp, 'utf8'));
+    if (rel && rel.version === V) {
+      // entry.file 必须真实存在于 release/ 下，否则给出的是 404 链接
+      const pick = (entry) => {
+        if (!entry || !entry.file) return null;
+        const fp = resolve(root, 'release', entry.file);
+        return existsSync(fp) ? { file: entry.file, size: entry.size || statSync(fp).size } : null;
+      };
+      const win = pick(rel.windows);
+      const web = pick(rel.web);
+      if (win) appManifest.windows = win;
+      if (web) appManifest.web = web;
+    } else if (rel && rel.version !== V) {
+      console.warn(`[sync-dist] release/version.json 是 v${rel.version}，与当前 v${V} 不一致，`
+        + 'dist-app 清单不桥接 windows/web（请重跑 npm run release:pack）。');
+    }
+  }
+} catch (e) {
+  console.warn('[sync-dist] 桥接 release 清单失败（不影响 dist-app 生成）：' + e.message);
+}
+// 约定名兜底：万一 release/version.json 还不存在（**CI 首次构建就是这样**），
+// 也要把 windows/web 按命名约定补上。
+//
+// 为什么必须在这里兜底、而不是等 build-release 之后：
+//   dist-app/ 的资源是在 **cargo 编译期**就被嵌进二进制的，安装包里的那份清单
+//   取决于 `cargo build` 那一刻磁盘上的 dist-app/version.json。
+//   若那时它缺 windows 字段，装好的客户端就永远只能靠联网拿清单 —— 断网/更新源失效
+//   时退化成「已是最新版本」，正是本项目反复出现的那类故障。
+//   文件名与 build-release.mjs 的约定一致（PRODUCT-<v>-Setup.exe / web-update-<v>.json），
+//   check-update-chain.mjs 有断言守着两者不漂移。
+if (!appManifest.windows) appManifest.windows = { file: `PromptForge-${V}-Setup.exe` };
+if (!appManifest.web) appManifest.web = { file: `web-update-${V}.json` };
 writeFileSync(resolve(distApp, 'version.json'), JSON.stringify(appManifest, null, 2) + '\n', 'utf8');
 
 // 拷贝后校验：任何一项缺失都直接失败。
