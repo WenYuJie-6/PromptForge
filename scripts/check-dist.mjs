@@ -30,6 +30,10 @@ if (!meta) {
 }
 const V = meta.version;
 ok.push(`version.json = ${V}`);
+// 前端资源版本（第二条轴）：热更新包/清单 web 字段按它校验，缺失时回退 app 版本。
+const WV = String(meta.webVersion || V).trim();
+if (meta.webVersion) ok.push(`version.json webVersion = ${WV}`);
+else warnings.push('version.json 缺少 webVersion（纯前端改动将无法与 app 版本解耦，回退为与程序同版本）');
 
 // ---- 1. 四处版本号必须一致 ----
 const pkg = readJSON('package.json');
@@ -89,9 +93,11 @@ for (const rel of ['release/version.json', 'dist/version.json']) {
     if (!e || !e.file) continue;
     const dir = rel.startsWith('release/') ? 'release' : 'dist';
     const fp = join(root, dir, e.file);
+    // 两条版本轴：windows 用 app 版本 V，web 用前端版本 webVersion（w 轴独立命名）
+    const want = key === 'web' ? WV : V;
     if (!existsSync(fp)) errors.push(`${rel} 的 ${key}.file=${e.file} 在 ${dir}/ 下不存在（会造成 404）`);
-    else if (versionOfFile(e.file) && versionOfFile(e.file) !== V) {
-      errors.push(`${rel} 的 ${key}.file=${e.file} 版本不符（当前 v${V}）`);
+    else if (versionOfFile(e.file) && versionOfFile(e.file) !== want) {
+      errors.push(`${rel} 的 ${key}.file=${e.file} 版本不符（${key} 轴应为 v${want}）`);
     } else ok.push(`${rel} → ${key}.file=${e.file} 已就位`);
   }
 }

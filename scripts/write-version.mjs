@@ -15,6 +15,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const meta = JSON.parse(readFileSync(resolve(root, 'version.json'), 'utf8'));
 const dist = resolve(root, 'dist');
 const strict = process.env.DIST_STRICT === '1';
+// 前端资源版本（第二条轴）：透传进 dist/version.json，客户端据此判断前端是否落后 → 走热更新
+const WebV = (meta.webVersion || meta.version).trim();
 
 if (!existsSync(dist)) {
   console.error('[write-version] dist 不存在，请先运行 sync-dist');
@@ -54,14 +56,15 @@ const windowsEntry = usable ? present(usable.windows, 'release') : null;
 
 const payload = {
   version: meta.version,
+  webVersion: WebV,
   notes: meta.notes || '',
   publishedAt: new Date().toISOString(),
   updateUrl: meta.updateUrl || '',
 };
 if (usable && usable.minAppVersion) payload.minAppVersion = usable.minAppVersion;
-// windows/web 让 check_update 能在「程序本体落后」时选中安装包；
-// 热更新包名是已知规律，不用等 release/ 也能推出候选名。
-payload.web = usable ? present(usable.web, 'release') : { file: `web-update-${meta.version}.json` };
+// windows/web 让 check_update 能在「程序本体/前端落后」时选中对应更新；
+// 热更新包名是已知规律，不用等 release/ 也能推出候选名（用 webVersion 命名）。
+payload.web = usable ? present(usable.web, 'release') : { file: `web-update-${WebV}.json` };
 if (windowsEntry) payload.windows = windowsEntry;
 
 writeFileSync(resolve(dist, 'version.json'), JSON.stringify(payload, null, 2) + '\n', 'utf8');

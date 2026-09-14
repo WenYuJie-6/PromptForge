@@ -274,6 +274,10 @@ struct UpdateInfo {
 /// 规范化后的更新清单（兼容新旧两种字段写法）
 struct Manifest {
   version: String,
+  /// 前端资源版本（独立于 app 版本的第二条轴）。
+  /// 缺失时为 None：旧清单没有这个字段，必须兼容，不能因此报错。
+  /// 读取时可回退到 `version`（旧清单里前端与程序同版本）。
+  web_version: Option<String>,
   notes: String,
   app_file: Option<String>,
   web_file: Option<String>,
@@ -295,6 +299,13 @@ fn manifest_from_value(v: &serde_json::Value) -> Result<Manifest, String> {
     .ok_or("更新清单缺少 version 字段")?
     .to_string();
   let notes = v.get("notes").and_then(|x| x.as_str()).unwrap_or("").to_string();
+  // 前端资源版本：**可选**字段。旧清单没有它，缺失时保持 None 交给调用方回退，
+  // 绝不能因为"读不到 webVersion"就报错——那会让所有旧清单直接失效。
+  let web_version = v
+    .get("webVersion")
+    .and_then(|x| x.as_str())
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty());
   let size = v.get("size").and_then(|x| x.as_u64()).unwrap_or(0);
   // 单个字段可能是字符串也可能是 {file,size} 对象，两种都兼容
   let as_file = |key: &str| -> Option<String> {
@@ -347,6 +358,7 @@ fn manifest_from_value(v: &serde_json::Value) -> Result<Manifest, String> {
 
   Ok(Manifest {
     version,
+    web_version,
     notes,
     app_file,
     web_file,
@@ -552,7 +564,17 @@ async fn check_update(
     },
   };
 
-  let newest = parse_version(&manifest.version).ok_or("清单里的版本号格式不正确")?;
+  // 两条独立的版本轴：
+  //   newest_app — 程序本体（全量安装包）版本，取自清单的 version
+  //   newest_web — 前端资源（热更新包）版本，取自清单的 webVersion；
+  //                旧清单没有 webVersion 时回退到 version（前端与程序同版本）
+  let newest_app = parse_version(&manifest.version).ok_or("清单里的版本号格式不正确")?;
+  let newest_web = parse_version(
+    manifest.web_version.as_deref().unwrap_or(manifest.version.as_str()),
+  )
+  // webVersion 是个可选字段：即便写了却格式不对，也退回 app 版本，
+  // 不因一个前端字段让整条更新检查失败（app 轴的格式错误仍按上面 ok_or 报错）。
+  .unwrap_or(newest_app);
   let cur_app = parse_version(&app_version).unwrap_or((0, 0, 0));
   let cur_web = parse_version(&web_version).unwrap_or(cur_app);
 
@@ -561,28 +583,30 @@ async fn check_update(
   // 关键修复：程序本体落后却拿不到安装包时，过去直接 return Ok(None)，
   // 前端据此显示「已是最新版本」——把"清单不完整"谎报成"没有更新"，
   // 用户因此反复点检查更新却永远升不上去。现在明确报错，把原因说清楚。
-  let (kind, file) = if newest > cur_app {
+  // Ok(None) 只允许出现在最后一条「两条轴都不落后、确实已是最新」的分支里。
+  let (kind, file) = if newest_app > cur_app {
     match manifest.app_file.clone() {
       Some(f) => ("app", f),
       None => match manifest.web_file.clone() {
         Some(f) => ("web", f),
         None => {
           return Err(format!(
-            "清单已是 v{}（当前程序 v{}），但既没有安装包字段（windows/app）也没有前端热更新包字段（web）。\
+            "清单里的程序版本已是 v{}（当前程序 v{}），但既没有安装包字段（windows/app）也没有前端热更新包字段（web）。\
              请检查更新源里的 version.json 是否由 `npm run release` 生成。",
             manifest.version, app_version
           ))
         }
       },
     }
-  } else if newest > cur_web {
+  } else if newest_web > cur_web {
     match manifest.web_file.clone() {
       Some(f) => ("web", f),
       None => {
         return Err(format!(
-          "清单已是 v{}（当前前端 v{}），但缺少前端热更新包字段（web）。\
+          "清单里的前端版本已是 v{}（当前前端 v{}），但缺少前端热更新包字段（web）。\
              请检查更新源里的 version.json，或改用手填更新源地址重新发布。",
-          manifest.version, web_version
+          manifest.web_version.as_deref().unwrap_or(manifest.version.as_str()),
+          web_version
         ))
       }
     }
@@ -816,6 +840,9 @@ struct UpdateState {
   local_manifest_version: Option<String>,
   /// 该清单来自哪一处（主程序目录 / 本地更新文件夹 / 前端资源目录）
   manifest_origin: Option<String>,
+  /// 本地清单里声明的「最新前端版本」（取清单 webVersion，缺失回退 version）。
+  /// 与 web_version（当前**生效**的前端版本）区分：这里说的是"清单上能热更新到哪个前端版本"。
+  latest_web_version: Option<String>,
 }
 
 #[tauri::command]
@@ -847,10 +874,13 @@ fn update_state(app: tauri::AppHandle) -> Result<UpdateState, String> {
   }
   // 把"实际能找到的最佳清单"也报给前端：用户没填更新源时，
   // 前端要据此说明"从哪检测的、清单上是哪个版本"，否则只能显示"最新版本"。
-  let (local_manifest_version, manifest_origin) = match read_best_local_manifest() {
-    Some((m, label)) => (Some(m.version), Some(label)),
-    None => (None, None),
-  };
+  // 同时取出清单声明的前端版本（webVersion，缺失回退 version），供前端展示热更新目标。
+  let best = read_best_local_manifest();
+  let local_manifest_version = best.as_ref().map(|(m, _)| m.version.clone());
+  let manifest_origin = best.as_ref().map(|(_, label)| label.clone());
+  let latest_web_version = best
+    .as_ref()
+    .map(|(m, _)| m.web_version.clone().unwrap_or_else(|| m.version.clone()));
   Ok(UpdateState {
     synced: web_version == app_version,
     app_version,
@@ -861,6 +891,7 @@ fn update_state(app: tauri::AppHandle) -> Result<UpdateState, String> {
     internal_latest,
     local_manifest_version,
     manifest_origin,
+    latest_web_version,
   })
 }
 

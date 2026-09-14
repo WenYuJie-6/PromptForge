@@ -18,6 +18,9 @@ const PRODUCT = 'PromptForge';
 
 const meta = JSON.parse(readFileSync(resolve(root, 'version.json'), 'utf8'));
 const version = meta.version;
+// 前端资源版本（第二条版本轴）：纯前端改动只 bump 它，走热更新、不用重装。
+// 缺失时回退 app 版本 —— 旧清单没有 webVersion，此时语义上"前端与程序同版本"。
+const webVersion = (meta.webVersion || version).trim();
 
 if (!existsSync(bundleRoot)) {
   console.error('[release] 未找到构建产物，请先运行：npm run tauri:build');
@@ -78,7 +81,8 @@ const winMsi = publish(msi, `${PRODUCT}-${version}.msi`, 'Windows 安装包（MS
 // ---- 3. 生成前端热更新包（base64 打包前端，供热切换，不退出软件）----
 // 扫描 dist-app/ 而不是 dist/ —— dist/ 里放着安装包与旧热更新包，
 // 一旦把它们 base64 进来，体积会逐版翻倍（实测 654KB → 12.29MB）。
-const webPackName = `web-update-${version}.json`;
+// 包名用 webVersion（前端版本轴），不是 app 版本。
+const webPackName = `web-update-${webVersion}.json`;
 const files = {};
 const B64_MAX = 8 * 1024 * 1024; // 超过 8MB 的单文件跳过，避免生成巨型 JSON
 const SELF_RE = /^web-update-.*\.json$/i;
@@ -104,7 +108,11 @@ const webSrc = existsSync(distApp) ? distApp : dist;
 })(webSrc, '');
 
 const webPackPath = join(releaseDir, webPackName);
-writeFileSync(webPackPath, JSON.stringify({ version, files }), 'utf8');
+// 关键：包内 version 用 webVersion，而不是 app 版本。
+// Rust 的 install_update 按包内 version 解包到 WebApp/<该值>，current_web_version 又按
+// 该目录名判定"当前生效的前端版本"。若这里写 app 版本，热更新后前端版本轴会被错误地
+// 抬到 app 版本，"前端可独立于程序更新"就失效了。
+writeFileSync(webPackPath, JSON.stringify({ version: webVersion, files }), 'utf8');
 const webEntry = { file: webPackName, size: statSync(webPackPath).size };
 copied.push({ label: '前端热更新包', name: webPackName, size: webEntry.size });
 
@@ -123,6 +131,7 @@ copied.push({ label: '前端热更新包', name: webPackName, size: webEntry.siz
 const updateUrl = (process.env.RELEASE_UPDATE_URL || meta.updateUrl || '').trim();
 const manifest = {
   version,
+  webVersion,
   notes: meta.notes || '',
   publishedAt: new Date().toISOString(),
   minAppVersion: meta.minAppVersion || '0.0.0',

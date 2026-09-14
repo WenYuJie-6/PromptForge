@@ -36,7 +36,7 @@ function manifestFromValue(v) {
     if (f.toLowerCase().endsWith('.json')) { if (webFile === undefined) webFile = f; }
     else if (appFile === undefined) appFile = f;
   }
-  return { version: v.version, notes: v.notes || '', appFile, webFile };
+  return { version: v.version, webVersion: v.webVersion, notes: v.notes || '', appFile, webFile };
 }
 
 const parseV = (s) => {
@@ -48,18 +48,24 @@ const cmp = (a, b) => (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
 
 // 复刻改造后的 check_update：落后但缺字段时**报错**，不再退化成「最新版本」。
 // `error` 非空即表示客户端会把具体原因显示给用户（可诊断），而非谎报"已是最新"。
+//
+// 两条独立版本轴（与 lib.rs 一一对应）：
+//   newestApp = 清单 version    → 与 curApp 比，落后则走 app 分支（重装）
+//   newestWeb = 清单 webVersion → 与 curWeb 比，落后则走 web 分支（热更新）
+// webVersion 缺失时回退 version（旧清单语义：前端与程序同版本）。
 function checkUpdate(manifest, appVersion, webVersion, dir, base) {
   if (!manifest) return { kind: null, error: '读不到更新清单', reason: '无清单' };
-  const newest = parseV(manifest.version);
-  if (!newest) return { kind: null, error: '清单里的版本号格式不正确' };
+  const newestApp = parseV(manifest.version);
+  if (!newestApp) return { kind: null, error: '清单里的版本号格式不正确' };
+  const newestWeb = parseV(manifest.webVersion || manifest.version) || newestApp;
   const curApp = parseV(appVersion) || [0, 0, 0];
   const curWeb = parseV(webVersion) || curApp;
   let kind, file;
-  if (cmp(newest, curApp) > 0) {
+  if (cmp(newestApp, curApp) > 0) {
     if (manifest.appFile) { kind = 'app'; file = manifest.appFile; }
     else if (manifest.webFile) { kind = 'web'; file = manifest.webFile; }
     else return { kind: null, error: '清单已是更高版本，但缺 windows/app 与 web 字段' };
-  } else if (cmp(newest, curWeb) > 0) {
+  } else if (cmp(newestWeb, curWeb) > 0) {
     if (manifest.webFile) { kind = 'web'; file = manifest.webFile; }
     else return { kind: null, error: '前端落后但清单缺少 web 字段' };
   } else {
@@ -70,6 +76,8 @@ function checkUpdate(manifest, appVersion, webVersion, dir, base) {
 }
 
 const V = readJSON('version.json').version;
+// 前端资源版本（第二条轴）：热更新包按它命名；缺失回退 app 版本
+const WV = readJSON('version.json').webVersion || V;
 P(`\n=== 更新链路端到端校验（当前源码 v${V}）===`);
 
 // ---- 场景 1：dist/version.json（网页端部署时客户端读到的清单）----
@@ -111,6 +119,34 @@ P('\n【场景 3】程序已最新、只有前端落后 → 应走热更新');
   assert(!!r.file && existsSync(resolve(root, 'dist', r.file)), '热更新包在 dist/ 下存在');
 }
 
+// ---- 场景 3.5：app 版本相同、仅 webVersion 领先 → web 热更新（本次改造核心验收点）----
+// 这是「前端能独立于程序更新」唯一直接的证据：
+//   清单 version == 客户端 app 版本（app 轴不触发），但清单 webVersion > 客户端当前前端版本。
+// 改造前只有一条版本轴时，这里必然落到 Ok(None)——把"有前端更新"谎报成"已是最新"，
+// 纯前端改动因此永远推不下去（只能重装）。改造后必须命中 web 分支。
+P('\n【场景 3.5】app 版本相同、仅 webVersion 领先 → web 热更新（核心验收点）');
+{
+  const bumpPatch = (s) => { const [a, b, c] = s.split('.').map(Number); return `${a}.${b}.${c + 1}`; };
+  const ahead = bumpPatch(V);
+  // 构造清单：app 版本保持 V 不变，只把 webVersion 抬高（模拟"纯前端改动"）
+  const manifest = {
+    version: V,
+    webVersion: ahead,
+    web: { file: `web-update-${ahead}.json` },
+    windows: { file: `PromptForge-${V}-Setup.exe` },
+  };
+  const m = manifestFromValue(manifest);
+  // 客户端：app 与当前前端资源都停在 V（刚装好、尚未热更新）
+  const r = checkUpdate(m, V, V, resolve(root, 'dist'), '');
+  assert(r.kind === 'web',
+    `清单 version==客户端 app(${V})、webVersion=${ahead} 领先 → 应判定 web 热更新`,
+    `kind=${r.kind} file=${r.file}`);
+  assert(r.file === `web-update-${ahead}.json`, '选中的是前端热更新包（不是安装包）', r.file);
+  // 守恒检查：确认本场景确实只在 web 轴上有更新（app 轴不落后），证明判定靠的是 webVersion
+  assert(cmp(parseV(V), parseV(V)) === 0 && cmp(parseV(ahead), parseV(V)) > 0,
+    '守恒：app 轴不落后、web 轴领先 —— 命中只可能来自 webVersion 这条轴');
+}
+
 // ---- 场景 4：回归——曾经的故障形态（清单缺 windows 字段）----
 // 改造前这里返回 {kind:null} → 前端显示「最新版本」（谎报）；
 // 改造后必须返回明确的错误，让用户看到"清单不完整"而不是"没有更新"。
@@ -144,11 +180,11 @@ P('\n【场景 4.5】dist-app/version.json（客户端自身携带的清单）')
 // ---- 场景 5：热更新包体积与内容边界 ----
 P('\n【场景 5】热更新包自排除、体积与内容边界');
 {
-  const wp = readJSON(`release/web-update-${V}.json`);
+  const wp = readJSON(`release/web-update-${WV}.json`);
   if (wp && wp.files) {
     const keys = Object.keys(wp.files);
     assert(!keys.some((k) => /^web-update-.*\.json$/i.test(k)), '不含历史热更新包');
-    const sizeMB = statSync(resolve(root, `release/web-update-${V}.json`)).size / 1048576;
+    const sizeMB = statSync(resolve(root, `release/web-update-${WV}.json`)).size / 1048576;
     assert(sizeMB < 3, `热更新包体积合理（${sizeMB.toFixed(2)} MB，含安装包会到 12+ MB）`);
     // 热更新包只应含前端资源：混入 exe/msi 会让每台客户端白下几十 MB
     const heavy = keys.filter((k) => /\.(exe|msi)$/i.test(k));

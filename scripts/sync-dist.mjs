@@ -17,6 +17,9 @@ const dist = resolve(root, 'dist');
 const distApp = resolve(root, 'dist-app');
 const metaAll = JSON.parse(readFileSync(resolve(root, 'version.json'), 'utf8'));
 const V = metaAll.version;
+// 前端资源版本（第二条轴）：热更新包按它命名，清单 webVersion 也取它。
+// 缺失时回退 app 版本（旧清单语义：前端与程序同版本）。
+const WV = (metaAll.webVersion || V).trim();
 
 // 拷贝前端源码（dist/ 与 dist-app/ 共用同一份）
 const copyItems = [
@@ -69,6 +72,7 @@ for (const item of copyItems) {
 // 只采纳与当前版本号一致的 release 清单，且核实文件真实存在，避免陈旧清单污染。
 const appManifest = {
   version: V,
+  webVersion: WV,
   notes: metaAll.notes || '',
   publishedAt: new Date().toISOString(),
 };
@@ -106,10 +110,11 @@ try {
 //   取决于 `cargo build` 那一刻磁盘上的 dist-app/version.json。
 //   若那时它缺 windows 字段，装好的客户端就永远只能靠联网拿清单 —— 断网/更新源失效
 //   时退化成「已是最新版本」，正是本项目反复出现的那类故障。
-//   文件名与 build-release.mjs 的约定一致（PRODUCT-<v>-Setup.exe / web-update-<v>.json），
+//   文件名与 build-release.mjs 的约定一致（PromptForge-<app版本>-Setup.exe / web-update-<webVersion>.json），
 //   check-update-chain.mjs 有断言守着两者不漂移。
+//   注意两条版本轴各按各的命名：windows 用 app 版本 V，web 用前端版本 WV。
 if (!appManifest.windows) appManifest.windows = { file: `PromptForge-${V}-Setup.exe` };
-if (!appManifest.web) appManifest.web = { file: `web-update-${V}.json` };
+if (!appManifest.web) appManifest.web = { file: `web-update-${WV}.json` };
 writeFileSync(resolve(distApp, 'version.json'), JSON.stringify(appManifest, null, 2) + '\n', 'utf8');
 
 // 拷贝后校验：任何一项缺失都直接失败。
@@ -151,7 +156,7 @@ const deployItems = [];
 for (const opt of [
   { src: ['release/Latest-Setup.exe', 'Latest-Setup.exe'], as: 'Latest-Setup.exe', versioned: `PromptForge-${V}-Setup.exe` },
   { src: ['release/Latest.msi', 'Latest.msi'], as: 'Latest.msi', versioned: `PromptForge-${V}.msi` },
-  { src: [`release/web-update-${V}.json`], as: `web-update-${V}.json` },
+  { src: [`release/web-update-${WV}.json`], as: `web-update-${WV}.json` },
 ]) {
   const found = opt.src.find((p) => existsSync(resolve(root, p)));
   if (!found) continue;

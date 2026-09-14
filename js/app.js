@@ -1673,7 +1673,8 @@ async function initUpdateSection() {
       .then(r => (r.ok ? r.json() : null))
       .then(j => {
         if (!j || !webEl) return;
-        webEl.textContent = 'v' + j.version;
+        // 网页端自己部署的就是"前端资源"，其版本取 webVersion（缺失回退 version）
+        webEl.textContent = 'v' + (j.webVersion || j.version);
         if (notesEl && j.notes) notesEl.textContent = '本版本更新：' + j.notes;
       })
       .catch(() => { if (webEl) webEl.textContent = '未知（version.json 不可达）'; });
@@ -1683,11 +1684,21 @@ async function initUpdateSection() {
   // 两端不同步时用户能直接看出来，而不是只能靠猜
   try {
     const st = await tauriInvoke('update_state');
-    if (vEl) vEl.textContent = 'v' + st.app_version;
+    // 程序版本与「当前生效的前端版本」是两条独立的版本轴，可能不一致（前端热更新后会更高）。
+    // 读不到前端版本时回退显示程序版本，绝不显示 "vundefined"。
+    const appVer = st.app_version || '';
+    const webVer = st.web_version || appVer;
+    if (vEl) vEl.textContent = appVer ? 'v' + appVer : '未知';
     if (webEl) {
-      webEl.textContent = st.synced
-        ? 'v' + st.web_version + '（与程序一致）'
-        : 'v' + st.web_version + '（高于程序版本，已热更新）';
+      if (!webVer) {
+        webEl.textContent = '未知';
+      } else {
+        // synced 字段缺失时用「前端版本是否等于程序版本」推断，保证一定有东西可显示
+        const sameAsApp = typeof st.synced === 'boolean' ? st.synced : webVer === appVer;
+        webEl.textContent = sameAsApp
+          ? 'v' + webVer + '（与程序一致）'
+          : 'v' + webVer + '（高于程序版本，已热更新）';
+      }
     }
     if (dirEl) dirEl.textContent = st.update_dir || '';
     // 把「更新源到底是什么、清单上是哪个版本」说清楚：过去用户只能看到

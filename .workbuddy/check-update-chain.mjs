@@ -49,12 +49,15 @@ r.check(/version\.json/.test(rustFn(rs, 'fetch_remote_manifest') || ''), 'fetch_
 
 // 注意 manifest_from_value 只负责它管的那几个键；
 // updateUrl / minAppVersion 是**前端字段**（Rust 侧完全不读，见 lib.rs 中 0 次出现）。
-const manifestKeys = ['version', 'notes', 'size', 'windows', 'app', 'web', 'service', 'internalLatest'];
+const manifestKeys = ['version', 'webVersion', 'notes', 'size', 'windows', 'app', 'web', 'service', 'internalLatest'];
 const mfv = rustFn(rs, 'manifest_from_value') || '';
 r.check(mfv.length > 0, '存在 manifest_from_value');
 const missingKeys = manifestKeys.filter((k) => !mfv.includes(`"${k}"`));
 r.check(missingKeys.length === 0, `manifest_from_value 解析它负责的全部字段（缺：${missingKeys.join(',') || '无'}）`);
 r.check(mfv.includes('as_file'), 'manifest_from_value 支持字段的两种写法（字符串 / {file,size} 对象）');
+// webVersion 是**可选**字段：旧清单没有它，缺失时必须保持 None，不能报错让整条检查失败
+r.check(/\.get\("webVersion"\)[\s\S]{0,80}?as_str\(\)/.test(mfv),
+  'manifest_from_value 以可选方式读取 webVersion（缺失时保持 None，不报错）');
 
 const cu = stripLineComments(rustFn(rs, 'check_update') || '', '//');
 r.check(cu.length > 0, '存在 check_update');
@@ -69,6 +72,14 @@ r.eq((cu.match(/Ok\(None\)/g) || []).length, 1, 'check_update 中只有 1 处 re
   r.check(fieldMissingBranches.length >= 2,
     `缺字段的 None 分支都以 Err 收尾（命中 ${fieldMissingBranches.length} 处，要求 ≥2）`);
 }
+// 前端版本轴（本次改造核心）：app 轴用 newest_app，前端轴用 newest_web（取自清单 webVersion）。
+// 少了这条独立轴，「改一行前端也要升 app 版本 → 必须重装」的老毛病就会复发。
+r.check(/let newest_app\s*=\s*parse_version\(&manifest\.version\)/.test(cu),
+  'check_update 用 newest_app 表示程序本体版本（来自清单 version）');
+r.check(/let newest_web\s*=\s*parse_version\(/.test(cu) && /web_version/.test(cu),
+  'check_update 用 newest_web 表示前端版本（来自清单 webVersion，缺失回退 version）');
+r.check(/newest_web\s*>\s*cur_web/.test(cu),
+  'check_update 的 web 分支按 newest_web > cur_web 判定（前端可独立于程序更新）');
 
 const du = rustFn(rs, 'download_update') || '';
 r.check(du.length > 0, '存在 download_update');
@@ -104,11 +115,16 @@ r.check(!!meta, 'version.json 可解析');
 r.check('version' in meta, 'version.json 有 version');
 r.check('updateUrl' in meta, 'version.json 有 updateUrl（允许为空，但不能缺键）');
 r.check('minAppVersion' in meta, 'version.json 有 minAppVersion');
+r.check('webVersion' in meta, 'version.json 有 webVersion（前端资源版本轴）');
 
 const br = read('scripts/build-release.mjs');
 r.check(/RELEASE_UPDATE_URL/.test(br), 'build-release 支持 RELEASE_UPDATE_URL 覆盖');
 r.check(/updateUrl/.test(br) && /manifest/.test(br), 'build-release 把 updateUrl 透传进清单');
 r.check(/windows/.test(br) && /web/.test(br), 'build-release 清单含 windows / web 字段');
+// 前端版本轴：清单与热更新包都必须用 webVersion，否则热更新后前端版本轴会失效
+r.check(/const webVersion = \(meta\.webVersion \|\| version\)\.trim\(\)/.test(br),
+  'build-release 独立解析 webVersion（缺失回退 version）');
+r.check(/const manifest = \{[\s\S]{0,120}?webVersion/.test(br), 'build-release 清单含 webVersion 字段');
 
 const sd = read('scripts/sync-dist.mjs');
 r.check(/distApp[\s\S]{0,80}version\.json|version\.json[\s\S]{0,80}distApp/.test(sd), 'sync-dist 写 dist-app/version.json');
@@ -121,20 +137,44 @@ r.check(/appManifest\.windows/.test(sd) && /appManifest\.web/.test(sd),
 // 只搜字符串会命中他处 → 断言变成恒真（负向测试实测踩过这个坑）。
 r.check(/if \(!appManifest\.windows\)\s*appManifest\.windows\s*=\s*\{\s*file:\s*`PromptForge-\$\{V\}-Setup\.exe`\s*\};/.test(sd),
   'sync-dist 有「约定名兜底」语句：windows = PromptForge-<v>-Setup.exe');
-r.check(/if \(!appManifest\.web\)\s*appManifest\.web\s*=\s*\{\s*file:\s*`web-update-\$\{V\}\.json`\s*\};/.test(sd),
-  'sync-dist 有「约定名兜底」语句：web = web-update-<v>.json');
+r.check(/if \(!appManifest\.web\)\s*appManifest\.web\s*=\s*\{\s*file:\s*`web-update-\$\{WV\}\.json`\s*\};/.test(sd),
+  'sync-dist 有「约定名兜底」语句：web = web-update-<webVersion>.json');
+// 两条版本轴各按各的命名：windows 用 app 版本 V，web 用前端版本 WV
+r.check(/const WV = \(metaAll\.webVersion \|\| V\)\.trim\(\)/.test(sd),
+  'sync-dist 独立解析 WV = webVersion（缺失回退 V）');
+r.check(/webVersion:\s*WV/.test(sd), 'sync-dist 把 webVersion 写进 dist-app/version.json');
 // 两个脚本的命名约定必须一致，否则客户端按 A 名字找、实际产出是 B 名字
 r.check(/const PRODUCT = 'PromptForge'/.test(br) && /\$\{PRODUCT\}-\$\{version\}-Setup\.exe/.test(br),
-  'build-release 使用同一 windows 命名约定（PRODUCT-<v>-Setup.exe）');
-r.check(/`web-update-\$\{version\}\.json`/.test(br), 'build-release 使用同一 web 包命名约定');
+  'build-release 使用同一 windows 命名约定（PRODUCT-<app版本>-Setup.exe）');
+r.check(/`web-update-\$\{webVersion\}\.json`/.test(br), 'build-release 用 webVersion 命名热更新包');
+r.check(/JSON\.stringify\(\{\s*version:\s*webVersion,\s*files\s*\}\)/.test(br),
+  'build-release 热更新包内 version 用 webVersion（否则热更新后前端版本轴失效）');
 
 const wv = read('scripts/write-version.mjs');
 r.check(/payload\.windows/.test(wv), 'write-version 把 windows 写入 dist/version.json');
 r.check(/DIST_STRICT/.test(wv), 'write-version 支持 DIST_STRICT 严格模式');
+r.check(/webVersion:\s*WebV/.test(wv), 'write-version 把 webVersion 透传进 dist/version.json');
+r.check(/web-update-\$\{WebV\}\.json/.test(wv), 'write-version 的 web 兜底名按 webVersion 命名');
+
+// 两条版本轴各有自己的 bump 脚本：app 轴（bump-version）与前端轴（bump-web-version）
+const bv = read('scripts/bump-version.mjs');
+r.check(/meta\.webVersion\s*=\s*next/.test(bv),
+  'bump-version 同时把 webVersion 与 version 对齐（全量包内嵌前端即该版本）');
+r.check(exists('scripts/bump-web-version.mjs'), '存在 bump-web-version.mjs（纯前端改动的版本轴）');
+{
+  const bwv = read('scripts/bump-web-version.mjs');
+  const bwvCode = stripLineComments(bwv, '//');
+  r.check(/meta\.webVersion\s*=\s*next/.test(bwvCode), 'bump-web-version 设置 version.json 的 webVersion');
+  r.check(!/meta\.version\s*=/.test(bwvCode), 'bump-web-version 不改 version（app 版本不受影响）');
+  r.check((bwvCode.match(/writeFileSync\(/g) || []).length === 1, 'bump-web-version 只写 version.json 一个文件');
+}
 
 r.check(exists('scripts/verify-update-chain.mjs'), '存在 verify-update-chain.mjs（端到端复刻判定）');
 const vc = read('scripts/verify-update-chain.mjs');
 r.check(/mkdirSync/.test(vc), 'verify-update-chain 写 .workbuddy 前先建目录（CI 上该目录不存在）');
+r.check(/webVersion/.test(vc), 'verify-update-chain 复刻了 webVersion 前端版本轴');
+r.check(/app 版本相同、仅 webVersion 领先/.test(vc),
+  'verify-update-chain 含核心验收场景：app 相同、webVersion 领先 → web 热更新');
 
 // ---- D. CI 工作流 ----
 r.section('D. CI 工作流（.github/workflows/deploy.yml）');

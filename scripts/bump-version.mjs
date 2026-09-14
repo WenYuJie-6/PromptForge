@@ -1,6 +1,18 @@
-// 统一版本号：以根目录 version.json 为唯一真源，同步到 package.json / tauri.conf.json / Cargo.toml
+// 统一「程序本体（app）」版本号：以根目录 version.json 为唯一真源，
+// 同步到 package.json / tauri.conf.json / Cargo.toml，并把前端资源版本 webVersion 对齐成同一个值。
 // 用法：node scripts/bump-version.mjs 0.1.4
-// 三处版本号各自维护是"客户端与网页端更新不同步"的隐藏根因，必须从源头收敛成一处。
+//
+// ---- 为什么需要两条版本轴（version 与 webVersion）----
+// 桌面端加载前端资源的顺序是：① 热更新目录 %LOCALAPPDATA%\PromptForge\WebApp\<版本>\ 优先
+// → ② 回退安装包内嵌资源。而 check_update 的判定是：
+//     newest > cur_app          → 走「app 分支」：要求下载完整安装包并重装
+//     else if newest > cur_web  → 走「web 分支」：前端热更新，不用重装
+// 当只有一条版本轴时，「bump version」会同时抬高 app 与 web 两个比较基准，
+// 于是纯前端改动也被判定成「程序本体落后」，被迫走重装 —— 「前端改动免重装」这条通道实际不可达。
+// 拆出 webVersion 后：app 改动才 bump version（发全量包），纯前端改动只 bump webVersion
+// （走热更新）。本脚本负责「发全量包」：它把 version 与 webVersion 一起抬到同一值，
+// 因为全量包内嵌的前端资源，其版本就是该全量包的版本 —— 这是正确语义。
+// 只发前端热更新时请改用：node scripts/bump-web-version.mjs <版本号>
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +29,11 @@ const versionPath = resolve(root, 'version.json');
 const meta = JSON.parse(readFileSync(versionPath, 'utf8'));
 const from = meta.version;
 meta.version = next;
+// 发全量包时，内嵌前端资源版本 = 全量包版本，两者对齐是正确语义（见文件头说明）。
+meta.webVersion = next;
 writeFileSync(versionPath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+console.log(`[bump] version.json 程序版本 ${from} → ${next}`);
+console.log(`[bump] version.json 前端版本 webVersion = ${next}（全量包内嵌前端即此版本，一并对齐）`);
 
 // 注意：不能用「替换前后是否相同」来判断「有没有找到字段」——
 // 目标值本来就等于当前值时，替换结果与原文一致，会被误报成"未找到版本号"，
