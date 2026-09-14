@@ -39,7 +39,7 @@
 | 3 | `.gitignore` | **缺失** | 必备 | **缺陷** |
 | 4 | 根目录散落过程文档 | 有 `CODE_REVIEW.md`(11KB)、`TEMPLATE_TEST_REPORT.md`(25KB)、`LOCAL_MODEL_README.md`(8KB)、`PWA_INSTALL_GUIDE.md`(4KB) | 过程产物应放 `docs/` 或 `docs/audit/`；根目录只留 README/CHANGELOG/LICENSE | 轻微缺陷 |
 | 5 | 根目录放二进制产物 | `Latest-Setup.exe`(3.4MB) + `Latest.msi`(5.4MB) 直接在根目录 | 发布产物应放 `release/` 或 `dist/`，根目录不进二进制（无 `.gitignore` 时会被提交） | 轻微缺陷 |
-| 6 | 构建脚本组织 | `scripts/` 下 5 个自研 `.mjs`（sync-dist / write-version / bump-version / build-release / make-web-update），职责分工清晰 | 许多 Tauri 项目把这类逻辑塞进 `package.json` 单行命令或 shell 脚本 | **良好的个人风格** |
+| 6 | 构建脚本组织 | `scripts/` 下多个自研 `.mjs`（sync-dist / write-version / bump-version / bump-web-version / build-release），职责分工清晰 | 许多 Tauri 项目把这类逻辑塞进 `package.json` 单行命令或 shell 脚本 | **良好的个人风格** |
 | 7 | 版本号单一来源 | `version.json` 作为唯一真源，由 `bump-version.mjs` 同步到 `package.json` / `tauri.conf.json` / `Cargo.toml` | 多数项目直接以 `package.json` 为真源，Rust 侧靠 `tauri.conf.json` 手抄 | **良好的个人风格** |
 
 ### 1.2 配置方式

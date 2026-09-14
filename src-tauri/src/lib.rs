@@ -444,19 +444,33 @@ fn read_webapp_manifest() -> Option<Manifest> {
 
 /// 探测所有本地清单来源，按优先级返回"版本号最高"的那一份。
 /// 返回 (清单, 来源说明)。来源说明用于前端展示，让用户知道是哪个文件生效的。
+///
+/// 排序键是二元组 (app version, webVersion)：先比程序版本，同 version 再比前端版本。
+/// 只按 app 版本排序时，"同 version、不同 webVersion"里更高的前端版本会被先到者挤掉
+///（来源序：本地更新文件夹 > 主程序目录 > 前端资源目录），用户就拿不到本该下发的纯前端
+/// 热更新——正是本次改造要根治的场景。webVersion 缺失/非法时回退 app 版本。
 fn read_best_local_manifest() -> Option<(Manifest, String)> {
-  let mut best: Option<((u64, u64, u64), Manifest, String)> = None;
+  let mut best: Option<((u64, u64, u64), (u64, u64, u64), Manifest, String)> = None;
   let mut consider = |m: Option<Manifest>, label: &str| {
     let Some(m) = m else { return };
-    let Some(v) = parse_version(&m.version) else { return };
-    if best.as_ref().map(|(bv, _, _)| v > *bv).unwrap_or(true) {
-      best = Some((v, m, label.to_string()));
+    let Some(app_v) = parse_version(&m.version) else { return };
+    let web_v = m
+      .web_version
+      .as_deref()
+      .and_then(parse_version)
+      .unwrap_or(app_v);
+    let better = best
+      .as_ref()
+      .map(|(best_app, best_web, _, _)| (app_v, web_v) > (*best_app, *best_web))
+      .unwrap_or(true);
+    if better {
+      best = Some((app_v, web_v, m, label.to_string()));
     }
   };
   consider(read_local_manifest().ok(), "本地更新文件夹");
   consider(read_portable_manifest(), "主程序目录");
   consider(read_webapp_manifest(), "前端资源目录");
-  best.map(|(_, m, l)| (m, l))
+  best.map(|(_, _, m, l)| (m, l))
 }
 
 /// 清理过时的前端版本目录：只保留当前生效的和上一个（留一个可回滚），其余删除。
@@ -530,6 +544,72 @@ fn current_web_version(app: &tauri::AppHandle) -> String {
   }
 }
 
+/// 更新抉择的结果类型：装完整安装包，还是前端热更新。
+#[derive(Debug, PartialEq, Eq)]
+enum UpdateKind {
+  /// 完整安装包（需退出安装）
+  App,
+  /// 前端热更新（不退出软件，装完刷新即生效）
+  Web,
+}
+
+/// 缺字段的两种情形：单独建模，便于 check_update 给出准确诊断、也便于单测断言。
+#[derive(Debug, PartialEq, Eq)]
+enum DecideError {
+  /// 程序本体落后，但清单既没有 windows/app 也没有 web 字段
+  MissingAppAndWeb,
+  /// 前端落后，但清单缺少 web 字段
+  MissingWebField,
+}
+
+/// 由清单的 version / webVersion 计算两条版本轴的比较基准。
+///
+/// 返回 (app 版本, 前端版本)。version 非法 → None（调用方据此报"版本号格式不正确"）。
+/// webVersion 缺失或非法 → 回退到 app 版本（旧清单没有该字段，语义是"前端与程序同版本"）。
+fn resolve_newest(
+  version: &str,
+  web_version: Option<&str>,
+) -> Option<((u64, u64, u64), (u64, u64, u64))> {
+  let app = parse_version(version)?;
+  let web = web_version.and_then(parse_version).unwrap_or(app);
+  Some((app, web))
+}
+
+/// 纯粹的更新抉择逻辑：**不依赖 Tauri 运行时、不做 IO**，可被 `#[cfg(test)]` 直接覆盖。
+///
+/// 两条独立版本轴：
+///   · app 轴（newest_app vs cur_app）—— 落后则装完整安装包
+///   · 前端轴（newest_web vs cur_web）—— 落后则走前端热更新
+/// 返回 Ok(None) 仅表示"两条轴都不落后、确实已是最新"；缺字段一律 Err，
+/// 绝不静默退化成"最新版本"（那正是本项目历史上的头号故障）。
+fn decide_update(
+  newest_app: (u64, u64, u64),
+  newest_web: (u64, u64, u64),
+  cur_app: (u64, u64, u64),
+  cur_web: (u64, u64, u64),
+  has_app_file: bool,
+  has_web_file: bool,
+) -> Result<Option<UpdateKind>, DecideError> {
+  if newest_app > cur_app {
+    if has_app_file {
+      Ok(Some(UpdateKind::App))
+    } else if has_web_file {
+      // 保留既有回退：程序本体落后但清单只带了前端包时，先走热更新
+      Ok(Some(UpdateKind::Web))
+    } else {
+      Err(DecideError::MissingAppAndWeb)
+    }
+  } else if newest_web > cur_web {
+    if has_web_file {
+      Ok(Some(UpdateKind::Web))
+    } else {
+      Err(DecideError::MissingWebField)
+    }
+  } else {
+    Ok(None)
+  }
+}
+
 /// 检查更新：远程清单优先，失败回退本地更新目录
 #[tauri::command]
 async fn check_update(
@@ -564,54 +644,56 @@ async fn check_update(
     },
   };
 
-  // 两条独立的版本轴：
-  //   newest_app — 程序本体（全量安装包）版本，取自清单的 version
-  //   newest_web — 前端资源（热更新包）版本，取自清单的 webVersion；
-  //                旧清单没有 webVersion 时回退到 version（前端与程序同版本）
-  let newest_app = parse_version(&manifest.version).ok_or("清单里的版本号格式不正确")?;
-  let newest_web = parse_version(
-    manifest.web_version.as_deref().unwrap_or(manifest.version.as_str()),
-  )
-  // webVersion 是个可选字段：即便写了却格式不对，也退回 app 版本，
-  // 不因一个前端字段让整条更新检查失败（app 轴的格式错误仍按上面 ok_or 报错）。
-  .unwrap_or(newest_app);
+  // 两条独立的版本轴：app 轴取清单 version，前端轴取清单 webVersion
+  // （webVersion 缺失/非法时回退 version —— 旧清单语义"前端与程序同版本"）。
+  let (newest_app, newest_web) =
+    resolve_newest(&manifest.version, manifest.web_version.as_deref())
+      .ok_or("清单里的版本号格式不正确")?;
   let cur_app = parse_version(&app_version).unwrap_or((0, 0, 0));
   let cur_web = parse_version(&web_version).unwrap_or(cur_app);
 
-  // 程序本体落后 → 装完整安装包；只有前端落后 → 走热更新。
+  // 抉择逻辑抽进纯函数 decide_update（有 #[cfg(test)] 真值表守着），
+  // 这里只负责把结果翻译成"装哪个文件 + 面向用户的诊断文案"。
   //
   // 关键修复：程序本体落后却拿不到安装包时，过去直接 return Ok(None)，
-  // 前端据此显示「已是最新版本」——把"清单不完整"谎报成"没有更新"，
-  // 用户因此反复点检查更新却永远升不上去。现在明确报错，把原因说清楚。
-  // Ok(None) 只允许出现在最后一条「两条轴都不落后、确实已是最新」的分支里。
-  let (kind, file) = if newest_app > cur_app {
-    match manifest.app_file.clone() {
-      Some(f) => ("app", f),
-      None => match manifest.web_file.clone() {
-        Some(f) => ("web", f),
-        None => {
-          return Err(format!(
-            "清单里的程序版本已是 v{}（当前程序 v{}），但既没有安装包字段（windows/app）也没有前端热更新包字段（web）。\
-             请检查更新源里的 version.json 是否由 `npm run release` 生成。",
-            manifest.version, app_version
-          ))
-        }
-      },
+  // 前端据此显示「已是最新版本」——把"清单不完整"谎报成"没有更新"。
+  // 现在明确报错，把原因说清楚；Ok(None) 只允许出现在"两条轴都不落后"这一处。
+  let decision = match decide_update(
+    newest_app,
+    newest_web,
+    cur_app,
+    cur_web,
+    manifest.app_file.is_some(),
+    manifest.web_file.is_some(),
+  ) {
+    Err(DecideError::MissingAppAndWeb) => {
+      return Err(format!(
+        "清单里的程序版本已是 v{}（当前程序 v{}），但既没有安装包字段（windows/app）也没有前端热更新包字段（web）。\
+         请检查更新源里的 version.json 是否由 `npm run release` 生成。",
+        manifest.version, app_version
+      ))
     }
-  } else if newest_web > cur_web {
-    match manifest.web_file.clone() {
-      Some(f) => ("web", f),
-      None => {
-        return Err(format!(
-          "清单里的前端版本已是 v{}（当前前端 v{}），但缺少前端热更新包字段（web）。\
-             请检查更新源里的 version.json，或改用手填更新源地址重新发布。",
-          manifest.web_version.as_deref().unwrap_or(manifest.version.as_str()),
-          web_version
-        ))
-      }
+    Err(DecideError::MissingWebField) => {
+      return Err(format!(
+        "清单里的前端版本已是 v{}（当前前端 v{}），但缺少前端热更新包字段（web）。\
+         请检查更新源里的 version.json，或改用手填更新源地址重新发布。",
+        manifest.web_version.as_deref().unwrap_or(manifest.version.as_str()),
+        web_version
+      ))
     }
-  } else {
-    return Ok(None);
+    Ok(d) => d,
+  };
+
+  let (kind, file) = match decision {
+    Some(UpdateKind::App) => (
+      "app",
+      manifest.app_file.clone().ok_or("清单缺少安装包字段（windows/app）")?,
+    ),
+    Some(UpdateKind::Web) => (
+      "web",
+      manifest.web_file.clone().ok_or("清单缺少前端热更新包字段（web）")?,
+    ),
+    None => return Ok(None),
   };
 
   // 远程/内置源：包不一定在本地（需要先 download_update）。
@@ -924,4 +1006,105 @@ async fn builtin_service_config() -> Result<serde_json::Value, String> {
     "model": manifest.service_model,
     "key": manifest.service_key,
   }))
+}
+
+// ============================================================
+// 单元测试：更新判定（decide_update / resolve_newest 的真值表）
+//
+// 为什么必须有真实单测，而不是只靠 check-update-chain.mjs 的文本断言：
+//   更新链路是「发布了新版，旧客户端永远显示最新版本」这号历史故障的重灾区，
+//   JS 端 verify-update-chain.mjs 只是**复刻**了一份判定逻辑，源码真改错了它一样绿；
+//   文本 token 断言又会在重构后误报。唯有把判定抽成不依赖 Tauri 运行时的纯函数、
+//   再用真值表逐条钉死，才能保证「两条版本轴」的判断不会被无声改坏。
+//   这些用例不触碰文件系统 / 网络，`cargo test --lib` 秒级跑完。
+// ============================================================
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// 版本号元组的简写，让真值表一眼能读
+  fn v(major: u64, minor: u64, patch: u64) -> (u64, u64, u64) {
+    (major, minor, patch)
+  }
+
+  #[test]
+  fn app_same_and_web_ahead_is_web() {
+    // app 两轴持平，仅前端领先 → 前端热更新（本次改造的核心场景）
+    let d = decide_update(v(1, 2, 3), v(1, 2, 4), v(1, 2, 3), v(1, 2, 3), false, true);
+    assert_eq!(d, Ok(Some(UpdateKind::Web)));
+  }
+
+  #[test]
+  fn both_axes_equal_is_none() {
+    // 两条轴都不落后 → 确实已是最新，这是唯一允许返回 Ok(None) 的分支
+    let d = decide_update(v(1, 2, 3), v(1, 2, 3), v(1, 2, 3), v(1, 2, 3), true, true);
+    assert_eq!(d, Ok(None));
+  }
+
+  #[test]
+  fn app_ahead_with_app_file_is_app() {
+    // 程序本体领先且带安装包 → 装完整安装包
+    let d = decide_update(v(1, 2, 4), v(1, 2, 4), v(1, 2, 3), v(1, 2, 3), true, true);
+    assert_eq!(d, Ok(Some(UpdateKind::App)));
+  }
+
+  #[test]
+  fn app_ahead_without_app_file_falls_back_to_web() {
+    // 程序本体领先但清单没带安装包、只带了前端包 → 先走热更新（保留既有回退语义）
+    let d = decide_update(v(1, 2, 4), v(1, 2, 4), v(1, 2, 3), v(1, 2, 3), false, true);
+    assert_eq!(d, Ok(Some(UpdateKind::Web)));
+  }
+
+  #[test]
+  fn app_ahead_without_any_file_is_error() {
+    // 程序本体领先且两种包都没有 → 必须报错，绝不静默退化成「已是最新」
+    let d = decide_update(v(1, 2, 4), v(1, 2, 4), v(1, 2, 3), v(1, 2, 3), false, false);
+    assert_eq!(d, Err(DecideError::MissingAppAndWeb));
+  }
+
+  #[test]
+  fn web_ahead_without_web_file_is_error() {
+    // 前端领先但缺 web 字段 → 报错，绝不谎报「已是最新」
+    let d = decide_update(v(1, 2, 3), v(1, 2, 4), v(1, 2, 3), v(1, 2, 3), false, false);
+    assert_eq!(d, Err(DecideError::MissingWebField));
+  }
+
+  #[test]
+  fn web_ahead_with_web_file_is_web() {
+    // 与上例对照：带 web 字段时正常判定为热更新
+    let d = decide_update(v(1, 2, 3), v(1, 2, 4), v(1, 2, 3), v(1, 2, 3), false, true);
+    assert_eq!(d, Ok(Some(UpdateKind::Web)));
+  }
+
+  #[test]
+  fn resolve_newest_without_web_version_falls_back_to_app() {
+    // 旧清单没有 webVersion → 前端轴回退成 app 版本（语义：前端与程序同版本）
+    assert_eq!(resolve_newest("1.2.3", None), Some((v(1, 2, 3), v(1, 2, 3))));
+  }
+
+  #[test]
+  fn resolve_newest_with_invalid_web_version_falls_back_without_panic() {
+    // webVersion 非法（如 "abc"）→ 回退 app 版本，且绝不 panic
+    assert_eq!(resolve_newest("1.2.3", Some("abc")), Some((v(1, 2, 3), v(1, 2, 3))));
+  }
+
+  #[test]
+  fn resolve_newest_with_invalid_app_version_is_none() {
+    // app 版本本身非法 → None，调用方据此提示「版本号格式不正确」
+    assert_eq!(resolve_newest("abc", Some("1.2.4")), None);
+  }
+
+  #[test]
+  fn resolve_newest_keeps_distinct_web_axis() {
+    // 正常双轴：app 与前端各自解析，且容忍 v 前缀
+    assert_eq!(resolve_newest("1.2.3", Some("v1.2.9")), Some((v(1, 2, 3), v(1, 2, 9))));
+  }
+
+  #[test]
+  fn parse_version_bounds() {
+    // parse_version 边界：容忍 v 前缀，拒绝段数不足 / 非数字
+    assert_eq!(parse_version("v0.2.1"), Some(v(0, 2, 1)));
+    assert_eq!(parse_version("0.2"), None);
+    assert_eq!(parse_version("0.2.x"), None);
+  }
 }

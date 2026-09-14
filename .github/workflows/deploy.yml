@@ -76,6 +76,12 @@ jobs:
       - name: Prepare frontend (dist-app + dist)
         run: npm run sync:dist
 
+      # Rust 单元测试：覆盖更新判定的双轴真值表（app 相同 + 前端 webVersion 领先 → Web 等）。
+      # 必须放在 sync:dist 之后 —— 编译 lib 时 tauri::generate_context! 需要 dist-app/。
+      # 这是"更新链路由真值表守护"的关键：JS 镜像与 token 断言都可能漏检，单测不能漏。
+      - name: Rust unit tests (update decision)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
       - name: Build Tauri app (cargo + NSIS/MSI bundle)
         run: node scripts/tauri-build.mjs
 

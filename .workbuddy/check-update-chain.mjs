@@ -17,7 +17,11 @@
 // 为什么值得单列：历史上「发布了新版，旧客户端永远显示最新版本」反复出现，
 // 根因是三层静默退化叠加。把这些不变量固化成断言，比事后排查便宜得多。
 // ============================================================
-import { read, exists, readJSON, reporter } from './_check-lib.mjs';
+import { read, exists, readJSON, reporter, P } from './_check-lib.mjs';
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const r = reporter('check-update-chain');
 
@@ -66,20 +70,54 @@ r.check(/安装包字段/.test(cu) && /热更新包字段/.test(cu),
   '「程序本体/前端落后但清单缺字段」时给出具体原因（不再谎报「最新版本」）');
 // 回归护栏：Ok(None) 只允许出现在「确实已是最新」这一条分支里
 r.eq((cu.match(/Ok\(None\)/g) || []).length, 1, 'check_update 中只有 1 处 return Ok(None)');
-// 结构断言：「取不到文件字段」的两个分支都必须以 return Err( 收尾，而不是落到 Ok(None)
+// 结构断言：「缺字段」的两个错误分支都必须以 return Err( 收尾，而不是落到 Ok(None)。
+// 重构后判定已抽进 decide_update，check_update 只负责把 DecideError 翻译成面向用户的 Err。
 {
-  const fieldMissingBranches = cu.match(/None\s*=>\s*\{[\s\S]{0,220}?return Err\(/g) || [];
-  r.check(fieldMissingBranches.length >= 2,
-    `缺字段的 None 分支都以 Err 收尾（命中 ${fieldMissingBranches.length} 处，要求 ≥2）`);
+  const errBranches = cu.match(/Err\(DecideError::\w+\)\s*=>\s*\{[\s\S]{0,400}?return Err\(/g) || [];
+  r.check(errBranches.length >= 2,
+    `缺字段的两个 DecideError 分支都以 return Err 收尾（命中 ${errBranches.length} 处，要求 ≥2）`);
+  r.check(/DecideError::MissingAppAndWeb/.test(cu) && /DecideError::MissingWebField/.test(cu),
+    'check_update 区分「无安装包也无前端包」与「缺 web 字段」两种诊断');
 }
 // 前端版本轴（本次改造核心）：app 轴用 newest_app，前端轴用 newest_web（取自清单 webVersion）。
 // 少了这条独立轴，「改一行前端也要升 app 版本 → 必须重装」的老毛病就会复发。
-r.check(/let newest_app\s*=\s*parse_version\(&manifest\.version\)/.test(cu),
-  'check_update 用 newest_app 表示程序本体版本（来自清单 version）');
-r.check(/let newest_web\s*=\s*parse_version\(/.test(cu) && /web_version/.test(cu),
-  'check_update 用 newest_web 表示前端版本（来自清单 webVersion，缺失回退 version）');
-r.check(/newest_web\s*>\s*cur_web/.test(cu),
-  'check_update 的 web 分支按 newest_web > cur_web 判定（前端可独立于程序更新）');
+//
+// 注意：判定逻辑已抽成纯函数 decide_update（不依赖 Tauri 运行时 / 无 IO），由 check_update 调用。
+// 断言必须贴着「纯函数结构」写 —— 把 token 绑死在 check_update 内部会在重构后误报。
+const rn = stripLineComments(rustFn(rs, 'resolve_newest') || '', '//');
+r.check(rn.length > 0, '存在纯函数 resolve_newest（解析两条版本轴）');
+r.check(/web_version[\s\S]{0,120}?unwrap_or\(app\)/.test(rn),
+  'resolve_newest 里 webVersion 缺失/非法时回退 app 版本（旧清单语义）');
+
+// decide_update 的提取会连带把「下一个 fn 前的属性行」也切进来（rustFn 到下一个 fn 的
+// 起始换行为止），那行里的 `tauri::` 会误触发"依赖 Tauri"判定 —— 先剥掉 `#` 属性行再断言。
+const duFn = stripLineComments(stripLineComments(rustFn(rs, 'decide_update') || '', '//'), '#');
+r.check(duFn.length > 0, '存在纯函数 decide_update（更新抉择，不依赖 Tauri 运行时）');
+r.check(!/tauri::|AppHandle|std::fs|reqwest/.test(duFn),
+  'decide_update 不依赖 Tauri 运行时与 IO（可被单测直接覆盖）');
+r.check(/newest_app\s*>\s*cur_app/.test(duFn), 'decide_update 按 newest_app > cur_app 判定 app 轴');
+r.check(/newest_web\s*>\s*cur_web/.test(duFn),
+  'decide_update 的 web 分支按 newest_web > cur_web 判定（前端可独立于程序更新）');
+
+r.check(/decide_update\(/.test(cu), 'check_update 调用纯函数 decide_update');
+r.check(/resolve_newest\(/.test(cu), 'check_update 调用纯函数 resolve_newest');
+r.check(/newest_app[\s\S]{0,60}?newest_web/.test(cu),
+  'check_update 从 resolve_newest 取出 newest_app / newest_web 两条轴');
+
+// P2：判定逻辑必须被真实单测钉死（不是靠 JS 复刻或文本 token），且 CI 会真的跑它。
+r.check(/#\[cfg\(test\)\]/.test(rs) && /mod tests\b/.test(rs), 'lib.rs 含 #[cfg(test)] mod tests');
+{
+  const tests = rs.slice(rs.indexOf('mod tests'));
+  const caseCount = (tests.match(/#\[test\]/g) || []).length;
+  r.check(caseCount >= 8, `decide_update / resolve_newest 单测覆盖 ≥8 条用例（实际 ${caseCount}）`);
+  r.check(/decide_update\(/.test(tests), '单测真值表直接调用 decide_update');
+  r.check(/app_same_and_web_ahead_is_web/.test(tests),
+    '单测含核心用例：app 相同 + 前端 webVersion 领先 → Web');
+  r.check(/resolve_newest\("1\.2\.3",\s*Some\("abc"\)\)/.test(tests),
+    '单测含「webVersion 非法 → 回退且不 panic」用例');
+  r.check(/resolve_newest\("1\.2\.3",\s*None\)/.test(tests),
+    '单测含「旧清单无 webVersion → 回退」用例');
+}
 
 const du = rustFn(rs, 'download_update') || '';
 r.check(du.length > 0, '存在 download_update');
@@ -200,5 +238,54 @@ r.check(!/github\.event\.repository\.name/.test(wf), '不再使用 github.event.
 r.check(!/tr\s+'\[:upper:\]'/.test(wf), '不对仓库名做转小写（GitHub Pages 路径按仓库名原名解析）');
 r.check(/upload-pages-artifact/.test(wf) && /path:\s*dist/.test(wf), 'CI 上传 dist/ 作为 Pages 产物');
 r.check(/fix-ps-encoding\.mjs/.test(wf), 'CI 构建前修正启动器脚本编码（PS5.1 BOM 陷阱）');
+
+// P2 回归护栏：CI 必须真的执行 Rust 单测，否则 decide_update 的真值表形同虚设。
+// 位置还必须在 tauri-build 之前 —— 单测要在打包前就拦住判定逻辑的回归。
+r.check(/cargo test/.test(wf), 'CI 执行 cargo test（真实运行 Rust 单测，而非只做文本断言）');
+{
+  const atRustTest = wf.indexOf('cargo test');
+  r.check(atRustTest >= 0 && atBuild >= 0 && atRustTest < atBuild,
+    'cargo test 早于 tauri-build（单测在编译/打包前把关）');
+  r.check(/cargo test[\s\S]{0,160}?--manifest-path src-tauri\/Cargo\.toml/.test(wf)
+      || /--manifest-path src-tauri\/Cargo\.toml[\s\S]{0,160}?cargo test/.test(wf),
+    'CI 的 cargo test 指定 src-tauri/Cargo.toml（在正确的工作目录执行）');
+}
+
+// ---- E. bump-web-version.mjs 执行级验证 ----
+// 仅做文本审计不够：必须真的把脚本跑一遍，断言「只有 version.json 的 webVersion 变了」，
+// 其余字段与其它版本载体一律不动。全程在**临时副本**上操作，绝不触碰工作区。
+r.section('E. bump-web-version.mjs 执行级验证（临时副本）');
+{
+  const wcBefore = read('version.json');
+  const tmp = mkdtempSync(join(tmpdir(), 'pf-bumpweb-'));
+  try {
+    mkdirSync(join(tmp, 'scripts'), { recursive: true });
+    copyFileSync(P('scripts/bump-web-version.mjs'), join(tmp, 'scripts/bump-web-version.mjs'));
+    copyFileSync(P('version.json'), join(tmp, 'version.json'));
+
+    const before = JSON.parse(readFileSync(join(tmp, 'version.json'), 'utf8'));
+    const target = '9.9.9';
+    const run = spawnSync(process.execPath, [join(tmp, 'scripts', 'bump-web-version.mjs'), target], {
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    r.check(run.status === 0, `临时副本上脚本执行成功（exit=${run.status}）`);
+    if (run.status !== 0) {
+      r.info('stderr: ' + String(run.stderr || '').trim().slice(0, 400));
+    }
+    const after = JSON.parse(readFileSync(join(tmp, 'version.json'), 'utf8'));
+    r.check(after.webVersion === target, `只有 webVersion 被设为 ${target}`);
+    r.check(after.version === before.version, `version 保持不变（仍为 ${before.version}）`);
+    // 逐键比对：除 webVersion 外任何字段发生变化都视为越界
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const changed = [...keys].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+    r.check(changed.length === 1 && changed[0] === 'webVersion',
+      `仅 webVersion 一个键发生变化（实际变化：${changed.join(',') || '无'}）`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+  // 工作区必须原样：临时副本跑脚本绝不能波及真实 version.json
+  r.check(read('version.json') === wcBefore, '工作区 version.json 未被脚本触碰（仅在临时副本上运行）');
+}
 
 r.done();
