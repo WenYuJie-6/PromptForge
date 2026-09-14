@@ -99,17 +99,28 @@ r.check(/newest_app\s*>\s*cur_app/.test(duFn), 'decide_update 按 newest_app > c
 r.check(/newest_web\s*>\s*cur_web/.test(duFn),
   'decide_update 的 web 分支按 newest_web > cur_web 判定（前端可独立于程序更新）');
 
-r.check(/decide_update\(/.test(cu), 'check_update 调用纯函数 decide_update');
-r.check(/resolve_newest\(/.test(cu), 'check_update 调用纯函数 resolve_newest');
-r.check(/newest_app[\s\S]{0,60}?newest_web/.test(cu),
-  'check_update 从 resolve_newest 取出 newest_app / newest_web 两条轴');
+// 组装层（结构性堵死 R1b）：check_update 必须只把**整份清单**交给 decide_from_manifest，
+// 且**不再**直接出现 decide_update( / resolve_newest( —— 两条版本轴只可能从清单里各读一次，
+// 「把同一个版本变量传两次」这类接线错误在结构上就写不出来。
+const dfm = stripLineComments(stripLineComments(rustFn(rs, 'decide_from_manifest') || '', '//'), '#');
+r.check(dfm.length > 0, '存在纯函数 decide_from_manifest（解析 + 组装 + 抉择，接收整个 Manifest）');
+r.check(/resolve_newest\(/.test(dfm), 'decide_from_manifest 内部调用 resolve_newest');
+r.check(/decide_update\(/.test(dfm), 'decide_from_manifest 内部调用 decide_update');
+r.check(/decide_from_manifest\(\s*&manifest/.test(cu), 'check_update 把整份清单 &manifest 交给 decide_from_manifest');
+r.check(!/decide_update\(/.test(cu), 'check_update 不再直接调用 decide_update（接线面收进纯函数）');
+r.check(!/resolve_newest\(/.test(cu), 'check_update 不再直接调用 resolve_newest（接线面收进纯函数）');
 
 // P2：判定逻辑必须被真实单测钉死（不是靠 JS 复刻或文本 token），且 CI 会真的跑它。
 r.check(/#\[cfg\(test\)\]/.test(rs) && /mod tests\b/.test(rs), 'lib.rs 含 #[cfg(test)] mod tests');
 {
   const tests = rs.slice(rs.indexOf('mod tests'));
   const caseCount = (tests.match(/#\[test\]/g) || []).length;
-  r.check(caseCount >= 8, `decide_update / resolve_newest 单测覆盖 ≥8 条用例（实际 ${caseCount}）`);
+  r.check(caseCount >= 8, `单测覆盖 ≥8 条用例（实际 ${caseCount}）`);
+  r.check(/decide_from_manifest\(/.test(tests),
+    '单测覆盖 decide_from_manifest（解析 + 组装链路，而不仅是 decide_update）');
+  r.check(/is_better_candidate\(/.test(tests), '单测覆盖 is_better_candidate（P3 排序护栏）');
+  r.check(/wiring_app_same_web_ahead_yields_web/.test(tests),
+    '单测含接线用例：manifest.version==cur_app 但 webVersion 领先 → Web（对应 R1b）');
   r.check(/decide_update\(/.test(tests), '单测真值表直接调用 decide_update');
   r.check(/app_same_and_web_ahead_is_web/.test(tests),
     '单测含核心用例：app 相同 + 前端 webVersion 领先 → Web');
@@ -127,6 +138,12 @@ for (const fn of ['read_local_manifest', 'read_portable_manifest', 'read_webapp_
   r.check(new RegExp(`fn ${fn}\\b`).test(rs), `本地清单来源存在：${fn}`);
 }
 r.check(/read_best_local_manifest[\s\S]{0,600}?version/.test(rs), 'read_best_local_manifest 按版本号挑选最佳清单');
+r.check(/fn is_better_candidate\b/.test(rs), '存在纯函数 is_better_candidate（候选/当前二元组比较）');
+{
+  const rbl = stripLineComments(rustFn(rs, 'read_best_local_manifest') || '', '//');
+  r.check(/is_better_candidate\(/.test(rbl),
+    'read_best_local_manifest 调用 is_better_candidate 判定（P3 二元组排序真护栏）');
+}
 
 // 关键解耦断言：离线模型不得掺进更新检查
 r.check(!/OfflineLLM|local_model|local-model|transformers/i.test(rs),

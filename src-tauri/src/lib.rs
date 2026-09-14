@@ -442,6 +442,18 @@ fn read_webapp_manifest() -> Option<Manifest> {
   None
 }
 
+/// 比较两个候选清单的版本高低。每个候选是 (app 版本, 前端版本) 二元组。
+///
+/// 抽成纯函数是为了让「二元组排序」这件事可被单测直接钉住：若退化成只比 app 版本（单键），
+/// "同 version、不同 webVersion"里更高的前端版本就会被先到者挤掉 —— 正是本模块要修的场景。
+/// 返回 true 表示 cand 应替换 best。
+fn is_better_candidate(
+  cand: ((u64, u64, u64), (u64, u64, u64)),
+  best: ((u64, u64, u64), (u64, u64, u64)),
+) -> bool {
+  cand > best
+}
+
 /// 探测所有本地清单来源，按优先级返回"版本号最高"的那一份。
 /// 返回 (清单, 来源说明)。来源说明用于前端展示，让用户知道是哪个文件生效的。
 ///
@@ -461,7 +473,7 @@ fn read_best_local_manifest() -> Option<(Manifest, String)> {
       .unwrap_or(app_v);
     let better = best
       .as_ref()
-      .map(|(best_app, best_web, _, _)| (app_v, web_v) > (*best_app, *best_web))
+      .map(|(best_app, best_web, _, _)| is_better_candidate((app_v, web_v), (*best_app, *best_web)))
       .unwrap_or(true);
     if better {
       best = Some((app_v, web_v, m, label.to_string()));
@@ -553,9 +565,11 @@ enum UpdateKind {
   Web,
 }
 
-/// 缺字段的两种情形：单独建模，便于 check_update 给出准确诊断、也便于单测断言。
+/// 抉择失败的三类情形：单独建模，便于 check_update 给出准确诊断、也便于单测断言。
 #[derive(Debug, PartialEq, Eq)]
 enum DecideError {
+  /// 清单 version 本身格式非法，解析不出比较基准
+  InvalidVersion,
   /// 程序本体落后，但清单既没有 windows/app 也没有 web 字段
   MissingAppAndWeb,
   /// 前端落后，但清单缺少 web 字段
@@ -610,6 +624,33 @@ fn decide_update(
   }
 }
 
+/// 从**整份清单**推导更新抉择：解析两条版本轴 → 与当前版本比较 → 得出结论。
+///
+/// 为什么要独立这一层（而不是在 check_update 里手工传两个版本变量）：
+///   check_update 曾直接 `decide_update(newest_app, newest_web, cur_app, cur_web, …)`，
+///   把「清单版本」与「前端版本」作为两个**同类型**裸参数并排传入 —— 一旦手滑写成
+///   `decide_update(newest_app, newest_app, …)`（前端轴塌陷成程序轴、忽略 webVersion），
+///   类型系统与单测都看不出来（两个参数类型相同、名字也都在）。
+///   改为接收整个 `Manifest` 后，两条版本轴只可能从清单里各读一次，
+///   这种「接错线」在结构上就写不出来。
+///
+/// 返回的 Err 里 InvalidVersion 表示清单 version 非法，其余两种表示缺字段。
+fn decide_from_manifest(
+  m: &Manifest,
+  cur_app: &str,
+  cur_web: &str,
+  has_app_file: bool,
+  has_web_file: bool,
+) -> Result<Option<UpdateKind>, DecideError> {
+  let (newest_app, newest_web) =
+    resolve_newest(&m.version, m.web_version.as_deref()).ok_or(DecideError::InvalidVersion)?;
+  // 当前版本解析失败时的回退语义与旧实现保持一致：
+  //   app 版本解析不了 → (0,0,0)（任何清单版本都视为更新）；前端版本解析不了 → 回退 app 版本。
+  let cur_app_v = parse_version(cur_app).unwrap_or((0, 0, 0));
+  let cur_web_v = parse_version(cur_web).unwrap_or(cur_app_v);
+  decide_update(newest_app, newest_web, cur_app_v, cur_web_v, has_app_file, has_web_file)
+}
+
 /// 检查更新：远程清单优先，失败回退本地更新目录
 #[tauri::command]
 async fn check_update(
@@ -644,28 +685,22 @@ async fn check_update(
     },
   };
 
-  // 两条独立的版本轴：app 轴取清单 version，前端轴取清单 webVersion
-  // （webVersion 缺失/非法时回退 version —— 旧清单语义"前端与程序同版本"）。
-  let (newest_app, newest_web) =
-    resolve_newest(&manifest.version, manifest.web_version.as_deref())
-      .ok_or("清单里的版本号格式不正确")?;
-  let cur_app = parse_version(&app_version).unwrap_or((0, 0, 0));
-  let cur_web = parse_version(&web_version).unwrap_or(cur_app);
-
-  // 抉择逻辑抽进纯函数 decide_update（有 #[cfg(test)] 真值表守着），
+  // 抉择逻辑整体收进纯函数 decide_from_manifest（有 #[cfg(test)] 真值表守着）：
+  // 它接收**整份清单**（两条版本轴从清单里各读一次，杜绝"把同一个变量传两次"）+
+  // 当前 app / 前端版本字符串，内部完成解析与比较。
   // 这里只负责把结果翻译成"装哪个文件 + 面向用户的诊断文案"。
   //
   // 关键修复：程序本体落后却拿不到安装包时，过去直接 return Ok(None)，
   // 前端据此显示「已是最新版本」——把"清单不完整"谎报成"没有更新"。
   // 现在明确报错，把原因说清楚；Ok(None) 只允许出现在"两条轴都不落后"这一处。
-  let decision = match decide_update(
-    newest_app,
-    newest_web,
-    cur_app,
-    cur_web,
+  let decision = match decide_from_manifest(
+    &manifest,
+    &app_version,
+    &web_version,
     manifest.app_file.is_some(),
     manifest.web_file.is_some(),
   ) {
+    Err(DecideError::InvalidVersion) => return Err("清单里的版本号格式不正确".to_string()),
     Err(DecideError::MissingAppAndWeb) => {
       return Err(format!(
         "清单里的程序版本已是 v{}（当前程序 v{}），但既没有安装包字段（windows/app）也没有前端热更新包字段（web）。\
@@ -1106,5 +1141,118 @@ mod tests {
     assert_eq!(parse_version("v0.2.1"), Some(v(0, 2, 1)));
     assert_eq!(parse_version("0.2"), None);
     assert_eq!(parse_version("0.2.x"), None);
+  }
+
+  // ------------------------------------------------------------
+  // 解析 + 组装链路（decide_from_manifest）：直接对应 QA R1b 的接线变异。
+  // 这些用例**必须**经过 decide_from_manifest（而不是直接调 decide_update），
+  // 才能守住"两条版本轴从清单里各读一次、不接错线"这一层。
+  // ------------------------------------------------------------
+
+  /// 造一份最小可用清单，供「解析 + 组装」链路测试使用
+  fn mk_manifest(
+    version: &str,
+    web_version: Option<&str>,
+    app_file: Option<&str>,
+    web_file: Option<&str>,
+  ) -> Manifest {
+    Manifest {
+      version: version.to_string(),
+      web_version: web_version.map(|s| s.to_string()),
+      notes: String::new(),
+      app_file: app_file.map(|s| s.to_string()),
+      web_file: web_file.map(|s| s.to_string()),
+      size: 0,
+      service_endpoint: None,
+      service_model: None,
+      service_key: None,
+      service_enabled: false,
+      internal_latest: None,
+    }
+  }
+
+  #[test]
+  fn wiring_app_same_web_ahead_yields_web() {
+    // 接线正确性（直接对应 R1b）：清单 version == 客户端 app，但 webVersion 领先。
+    // 若内部把 web 轴塌陷成 app 轴（decide_update(newest_app, newest_app, …)），本条必失败。
+    let m = mk_manifest("1.2.3", Some("1.2.4"), Some("setup.exe"), Some("web.json"));
+    let d = decide_from_manifest(&m, "1.2.3", "1.2.3", true, true);
+    assert_eq!(d, Ok(Some(UpdateKind::Web)));
+  }
+
+  #[test]
+  fn wiring_axes_not_interchangeable() {
+    // 反向塌陷探针：version 领先、webVersion 落后 → 必须是 App，而不是 Web / None。
+    let m = mk_manifest("1.2.4", Some("1.2.0"), Some("setup.exe"), Some("web.json"));
+    let d = decide_from_manifest(&m, "1.2.3", "1.2.3", true, true);
+    assert_eq!(d, Ok(Some(UpdateKind::App)));
+  }
+
+  #[test]
+  fn wiring_legacy_manifest_without_web_version_is_none() {
+    // 旧清单（无 webVersion）经完整链路：前端轴回退 app 版本，app 相同 → 确实已最新。
+    let m = mk_manifest("1.2.3", None, Some("setup.exe"), Some("web.json"));
+    let d = decide_from_manifest(&m, "1.2.3", "1.2.3", true, true);
+    assert_eq!(d, Ok(None));
+  }
+
+  #[test]
+  fn wiring_invalid_web_version_full_chain_no_panic() {
+    // webVersion 非法字符串经完整链路 → 回退 app 版本、不 panic（app 相同 → None）。
+    let m = mk_manifest("1.2.3", Some("abc"), Some("setup.exe"), Some("web.json"));
+    let d = decide_from_manifest(&m, "1.2.3", "1.2.3", true, true);
+    assert_eq!(d, Ok(None));
+  }
+
+  #[test]
+  fn wiring_invalid_version_reports_error() {
+    // 清单 version 本身非法 → InvalidVersion（check_update 据此提示「版本号格式不正确」）。
+    let m = mk_manifest("abc", Some("1.2.4"), Some("setup.exe"), Some("web.json"));
+    let d = decide_from_manifest(&m, "1.2.3", "1.2.3", true, true);
+    assert_eq!(d, Err(DecideError::InvalidVersion));
+  }
+
+  #[test]
+  fn wiring_web_ahead_but_missing_web_file_is_error() {
+    // 前端领先但清单没有 web 文件字段 → 经完整链路仍是 Err(MissingWebField)。
+    let m = mk_manifest("1.2.3", Some("1.2.4"), Some("setup.exe"), None);
+    let d = decide_from_manifest(&m, "1.2.3", "1.2.3", true, false);
+    assert_eq!(d, Err(DecideError::MissingWebField));
+  }
+
+  // ------------------------------------------------------------
+  // 本地清单排序（is_better_candidate）：给 P3 的二元组排序加真护栏
+  // ------------------------------------------------------------
+
+  #[test]
+  fn better_same_app_higher_web_is_true() {
+    // app 相同、候选 webVersion 更高 → 应替换（P3 的核心；退化成单键比较本条必失败）
+    assert!(is_better_candidate(((1, 2, 3), (1, 2, 4)), ((1, 2, 3), (1, 2, 3))));
+  }
+
+  #[test]
+  fn better_higher_app_wins_even_with_lower_web() {
+    // app 版本更高 → 一定更优（即使 webVersion 更低）
+    assert!(is_better_candidate(((1, 2, 4), (1, 0, 0)), ((1, 2, 3), (1, 9, 9))));
+  }
+
+  #[test]
+  fn better_lower_app_is_false() {
+    // app 版本更低 → 不替换（即使 webVersion 高得多）
+    assert!(!is_better_candidate(((1, 2, 2), (9, 9, 9)), ((1, 2, 3), (0, 0, 0))));
+  }
+
+  #[test]
+  fn better_equal_is_false() {
+    // 完全相等 → 不替换（先到者优先，保持稳定）
+    assert!(!is_better_candidate(((1, 2, 3), (1, 2, 3)), ((1, 2, 3), (1, 2, 3))));
+  }
+
+  #[test]
+  fn better_web_version_fallback_then_compare() {
+    // 候选 webVersion 缺失 → 回退 app 版本（(1,2,3),(1,2,3)）：比 best 的 (1,2,3),(1,2,4) 更旧 → false。
+    assert!(!is_better_candidate(((1, 2, 3), (1, 2, 3)), ((1, 2, 3), (1, 2, 4))));
+    // 反向：best 的前端停在回退值，候选前端更高 → true。
+    assert!(is_better_candidate(((1, 2, 3), (1, 2, 4)), ((1, 2, 3), (1, 2, 3))));
   }
 }
