@@ -100,25 +100,60 @@ r.check(fragile.every((h) => lexicalBound.has(h)),
 // ---- D. id 交叉比对 ----
 r.section('D. 控件 id 交叉比对');
 const htmlIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
-// 遗留控件：旧版离线模型设置控件已被新界面取代，代码里保留了读取但都有空值保护。
-// 出现在这里属于「已知且安全」，不是缺陷；若未来新增，请先确认有空值保护再加进来。
-const LEGACY_IDS = new Set(['set-local-mode', 'set-local-model', 'local-model-config']);
+// 遗留控件（set-local-mode / set-local-model / local-model-config）已随本次修复彻底删除，
+// 全仓 js/ 不应再出现这三个 id —— 因此不再用白名单，而是直接断言「零引用」。
+// 历史教训：旧断言用 .some() 判断「任一文件有保护」就算过；
+// checkLocalMode 在定义处有空值判断、却在 4 个调用点裸解引用，断言照样全绿、线上照崩。
+const LEGACY_IDS = ['set-local-mode', 'set-local-model', 'local-model-config'];
+const legacyHits = [];
+for (const f of jsFiles()) {
+  const src = stripComments(read(f));
+  for (const id of LEGACY_IDS) if (src.includes(id)) legacyHits.push(`${f}:${id}`);
+}
+r.check(legacyHits.length === 0,
+  `js/ 下已无遗留控件 id（残留：${legacyHits.join(',') || '无'}）`);
 
 const refIds = new Set();
 for (const f of jsFiles()) {
   for (const m of read(f).matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) refIds.add(m[1]);
 }
 r.check(refIds.size >= 60, `js/ 中字面量 id 引用 ${refIds.size} 个（>=60）`);
-const ghosts = [...refIds].filter((id) => !htmlIds.has(id) && !LEGACY_IDS.has(id)).sort();
+const ghosts = [...refIds].filter((id) => !htmlIds.has(id)).sort();
 r.check(ghosts.length === 0, `每个被引用的 id 都存在于 index.html（幽灵引用：${ghosts.join(',') || '无'}）`);
-// 遗留 id 的引用处必须带空值保护，否则运行时会 TypeError
-for (const id of LEGACY_IDS) {
-  const guard = jsFiles().some((f) => {
-    const s = read(f);
-    return new RegExp(`if\\s*\\(\\s*!?${id}\\b[^)]*\\)`).test(s) || new RegExp(`getElementById\\(['"]${id}['"]\\)\\s*;?\\s*\\n?\\s*if\\s*\\(`).test(s);
+
+// 裸解引用护栏 —— 本条正是本次崩溃的守卫：
+// 扫描形如 getElementById('字面量').属性（`)` 后直接跟 `.`，无 `?.`）的读取，
+// 断言每个字面量 id 都真实存在于 index.html。
+// 反例即本次崩溃点：document.getElementById('set-local-mode').checked
+// —— set-local-mode 不在 index.html ⇒ getElementById 返回 null ⇒ 读 .checked 必抛。
+const bareDeref = [];
+for (const f of jsFiles()) {
+  const src = stripComments(read(f));
+  src.split('\n').forEach((line, i) => {
+    for (const m of line.matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)\s*\./g)) {
+      bareDeref.push({ where: `${f}:${i + 1}`, id: m[1] });
+    }
   });
-  r.check(guard, `遗留控件 ${id} 的读取处带空值保护`);
 }
+r.check(bareDeref.length >= 30,
+  `扫描到 ${bareDeref.length} 处裸解引用 getElementById('id').prop（>=30，防正则失效后静默通过）`);
+const bareGhosts = bareDeref.filter((b) => !htmlIds.has(b.id));
+r.check(bareGhosts.length === 0,
+  `每个裸解引用的 id 都存在于 index.html（幽灵：${bareGhosts.map((b) => b.where + ' ' + b.id).join(',') || '无'}）`);
+
+// 已删除的遗留全局函数不得被重新定义（防「删了实现、漏了调用点」式回归）。
+const removedGlobals = ['checkLocalMode', 'saveLocalSettings', 'downloadLocalModel', 'manageLocalModels'];
+const reintroduced = [];
+for (const f of jsFiles()) {
+  const src = stripComments(read(f));
+  for (const n of removedGlobals) {
+    if (new RegExp(`window\\.${n}\\s*=`).test(src) || new RegExp(`function\\s+${n}\\s*\\(`).test(src)) {
+      reintroduced.push(`${f}:${n}`);
+    }
+  }
+}
+r.check(reintroduced.length === 0,
+  `已删除的遗留函数未被重新定义（残留：${reintroduced.join(',') || '无'}）`);
 
 // ---- E. 关键入口与回归护栏 ----
 r.section('E. 关键入口');

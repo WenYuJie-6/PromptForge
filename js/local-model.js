@@ -107,16 +107,19 @@ class LocalModelManager {
 
   updateProgress(progress) {
     this.modelProgress = progress.progress;
-    const modelType = document.getElementById('set-local-model').value;
-    
+
+    // 进度回调在模型下载/加载期间被调用，**不能**读设置页控件：
+    // 旧版离线控件（set-local-model 等）早已被 #set-engine + #model-cards 取代，
+    // getElementById 返回 null、读 .value 会抛空引用崩溃。
+    // 状态文案统一由 updateModelStatus(status) 写入 #model-status；需要当前模型时用 this.currentModel。
     if (progress.status === 'downloading') {
-      updateModelStatus(modelType, `下载中... ${Math.round(progress.progress * 100)}%`);
+      updateModelStatus(`下载中... ${Math.round(progress.progress * 100)}%`);
       window.updateProgress(progress.progress * 100, `下载中... ${Math.round(progress.progress * 100)}%`);
     } else if (progress.status === 'loading') {
-      updateModelStatus(modelType, `加载中... ${Math.round(progress.progress * 100)}%`);
+      updateModelStatus(`加载中... ${Math.round(progress.progress * 100)}%`);
       window.updateProgress(progress.progress * 100, `加载中... ${Math.round(progress.progress * 100)}%`);
     } else if (progress.status === 'ready') {
-      updateModelStatus(modelType, '已加载');
+      updateModelStatus('已加载');
       window.hideProgress();
     }
   }
@@ -159,12 +162,12 @@ class LocalModelManager {
     console.log(`Starting download for ${modelInfo.name}`);
     
     try {
-      updateModelStatus(modelType, '准备下载...');
+      updateModelStatus('准备下载...');
       
       // 检查是否已缓存
       const isCached = await this.offlineLLM.isModelCached(modelInfo.id);
       if (isCached) {
-        updateModelStatus(modelType, '已下载');
+        updateModelStatus('已下载');
         toast('模型已存在');
         return;
       }
@@ -175,12 +178,12 @@ class LocalModelManager {
       });
       
       toast('模型下载完成！');
-      updateModelStatus(modelType, '已下载');
+      updateModelStatus('已下载');
       
     } catch (error) {
       console.error('Download failed:', error);
       toast('模型下载失败: ' + error.message);
-      updateModelStatus(modelType, '下载失败');
+      updateModelStatus('下载失败');
       throw error;
     }
   }
@@ -267,7 +270,9 @@ const modelCards = (OfflineLLM.MODEL_OPTIONS || []).map((m) => ({
 }));
 
 // 辅助函数
-function updateModelStatus(modelType, status) {
+// 只承载「状态文案」一个职责：写入 #model-status。
+// 历史上它带一个从未被使用的 modelType 形参，正是它诱使调用方去读已废弃的下拉框。
+function updateModelStatus(status) {
   const statusElement = document.getElementById('model-status');
   if (statusElement) {
     statusElement.textContent = status;
@@ -410,92 +415,21 @@ window.initOfflineModels = function() {
   }
 };
 
-// 导出全局函数
-window.downloadLocalModel = async function() {
-  const modelSelect = document.getElementById('set-local-model');
-  const modelType = modelSelect.value;
-  
-  try {
-    updateModelStatus(modelType, '准备下载...');
-    
-    // 开始下载
-    await localModelManager.downloadModel(modelType);
-    toast('模型下载完成！');
-    
-    // 更新状态
-    updateModelStatus(modelType, '已下载');
-    
-  } catch (error) {
-    console.error('Download failed:', error);
-    toast('模型下载失败: ' + error.message);
-    updateModelStatus(modelType, '下载失败');
-  }
-};
-
-// 检查本地模式设置
-window.checkLocalMode = function() {
-  const localMode = document.getElementById('set-local-mode').checked;
-  const modelConfig = document.getElementById('local-model-config');
-  
-  if (localMode) {
-    modelConfig.classList.remove('hidden');
-    
-    // 检查是否有已下载的模型
-    const selectedModel = document.getElementById('set-local-model').value;
-    localModelManager.getModelStatus(selectedModel).then(status => {
-      if (status.status === 'downloaded') {
-        updateModelStatus(selectedModel, '已下载');
-      } else {
-        updateModelStatus(selectedModel, '未下载模型');
-      }
-    }).catch(() => {
-      updateModelStatus(selectedModel, '未下载模型');
-    });
-  } else {
-    modelConfig.classList.add('hidden');
-  }
-};
-
-// 保存设置时检查本地模式（写入统一的 pf_settings 存储键）
-window.saveLocalSettings = function() {
-  const localModeEl = document.getElementById('set-local-mode');
-  const localModelEl = document.getElementById('set-local-model');
-  if (!localModeEl || !localModelEl) return; // 旧版控件已被新离线界面取代
-
-  const settings = loadSettings();
-  settings.localMode = localModeEl.checked;
-  settings.localModel = localModelEl.value;
-  saveSettingsToStorage(settings);
-
-  // 如果启用本地模式，确保模型已加载
-  if (settings.localMode && localModelManager) {
-    localModelManager.loadModel(settings.localModel).catch(error => {
-      console.error('Failed to load local model:', error);
-      if (typeof toast === 'function') toast('本地模型加载失败，请检查模型下载状态');
-    });
-  }
-};
-
-// 添加模型管理功能
-window.manageLocalModels = async function() {
-  const selectedModel = document.getElementById('set-local-model').value;
-  const modelInfo = localModelManager.modelInfo[selectedModel];
-
-  if (!modelInfo) return;
-
-  // 删除缓存属破坏性操作，统一走主题化弹窗；名称/体积来自模型元数据，仍经 escapeHTML 防注入
-  const ok = await askDialog({
-    title: '删除模型缓存',
-    body: `确定要删除 <b>${escapeHTML(String(modelInfo.name))}</b> 的缓存吗？`
-      + `这将释放 ${escapeHTML(String(modelInfo.size))} 存储空间。`,
-    confirmText: '删除',
-    cancelText: '取消',
-    danger: true,
-  });
-  if (ok) {
-    localModelManager.deleteModelCache(selectedModel);
-  }
-};
+// ============================================================
+// 本处原有 4 个全局函数已删除：downloadLocalModel / checkLocalMode /
+// saveLocalSettings / manageLocalModels。
+//
+// 删除原因：它们全部依赖早被废弃的旧版离线控件 id ——
+//   set-local-mode / set-local-model / local-model-config
+// 这些 id 在新界面中并不存在（引擎选择改用 #set-engine，模型选择改用
+// #model-cards），因此 getElementById 返回 null，读 .value / .checked
+// 会抛「Cannot read properties of null」崩溃；而全仓已无任何调用者，
+// 保留它们只会制造随时会被触发的活雷（downloadLocalModel 尤其危险）。
+//
+// 与之等价的能力由 offline-ui.js 的 renderModelCards() / selectModel() /
+// downloadModelCard() 与 localModelManager 提供，属既有做法（此前已这样
+// 删除了浮动安装按钮与旧的独立模型管理模块）。
+// ============================================================
 
 // 获取设备信息
 window.getDeviceInfo = function() {

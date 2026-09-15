@@ -1018,20 +1018,9 @@ function loadSettingsUI() {
   // 根据引擎类型显示/隐藏相关设置
   updateEngineUI(s.engine);
   
-  // 本地模式设置（旧版控件可能不存在，做安全访问）
-  const localModeEl = document.getElementById('set-local-mode');
-  if (localModeEl) localModeEl.checked = s.localMode || false;
-  const localModelEl = document.getElementById('set-local-model');
-  if (localModelEl) localModelEl.value = s.localModel || 'qwen25';
-
   // 软件更新源地址：留空则仅使用客户端本地更新文件夹
   const updateUrlEl = document.getElementById('set-update-url');
   if (updateUrlEl) updateUrlEl.value = s.updateUrl || '';
-  
-  // 检查本地模式状态
-  if (typeof window.checkLocalMode === 'function') {
-    window.checkLocalMode();
-  }
 }
 
 function saveSettings() {
@@ -1048,20 +1037,12 @@ function saveSettings() {
     },
     // 引擎设置
     engine: document.getElementById('set-engine').value || 'online',
-    // 本地模式设置（控件可能不存在，统一用可选链 + 兜底，避免整段保存失败）
-    localMode: document.getElementById('set-local-mode')?.checked || false,
-    localModel: document.getElementById('set-local-model')?.value || 'qwen25',
     // 软件更新源地址（网页端 version.json 所在目录，例如 https://example.com/promptforge/）
     updateUrl: (document.getElementById('set-update-url')?.value || '').trim(),
   };
   
   saveSettingsToStorage(s);
   saveSyncMeta({ ...loadSyncMeta(), settings: Date.now() });
-  
-  // 保存本地模式设置
-  if (typeof window.saveLocalSettings === 'function') {
-    window.saveLocalSettings();
-  }
   
   const status = document.getElementById('save-status');
   status.textContent = '已保存 ✓';
@@ -1423,10 +1404,6 @@ function onEngineChange(engine) {
     if (typeof renderModelCards === 'function') renderModelCards();
     if (typeof renderDeviceInfo === 'function') renderDeviceInfo();
   }
-
-  if (typeof window.checkLocalMode === 'function') {
-    window.checkLocalMode();
-  }
 }
 
 // 显示离线模型部分
@@ -1457,13 +1434,6 @@ function setupEngineListeners() {
       const settings = loadSettings();
       settings.engine = engine;
       saveSettingsToStorage(settings);
-      
-      // 如果切换到离线模式，检查本地模型状态
-      if (engine === 'offline') {
-        if (typeof window.checkLocalMode === 'function') {
-          window.checkLocalMode();
-        }
-      }
     });
   });
 }
@@ -1960,16 +1930,6 @@ document.addEventListener('DOMContentLoaded', () => {
       startOptimize();
     }
   });
-  
-  // 本地模式切换
-  const localModeToggle = document.getElementById('set-local-mode');
-  if (localModeToggle) {
-    localModeToggle.addEventListener('change', () => {
-      if (typeof window.checkLocalMode === 'function') {
-        window.checkLocalMode();
-      }
-    });
-  }
 
   // 引擎切换
   setupEngineListeners();

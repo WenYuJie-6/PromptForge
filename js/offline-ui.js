@@ -52,27 +52,22 @@ async function renderDeviceInfo() {
     `;
     
     el.innerHTML = deviceHtml;
-    
-    // 如果有推荐模型，自动选择
+
+    // 推荐模型「展示名 → 短键」薄映射：交给唯一数据源 OfflineLLM.MODEL_OPTIONS 解析，
+    // 模型清单本身不重复维护。旧版据此回填已废弃的 #set-local-model 下拉框；
+    // 该控件已被 #model-cards 取代，故改为把推荐模型的仓库全名标注到推荐项上（data-model-id），
+    // 供调试与后续扩展使用，且不再触碰任何已废弃控件。
     if (deviceInfo.recommendation.model) {
-      const modelSelect = document.getElementById('set-local-model');
-      if (modelSelect) {
-        // 推荐用的是展示名（如 'Qwen2.5-1.5B'），映射回仓库全名交给唯一数据源解析。
-        // 这里只保留"展示名 → 短键"的薄映射，模型清单本身不重复维护。
-        const nameToKey = {
-          'Qwen2.5-1.5B': 'qwen25',
-          'Phi-3.5 Mini': 'phi35',
-          'SmolLM2-1.7B': 'smollm',
-        };
-        const entry = OfflineLLM.resolveModel(nameToKey[deviceInfo.recommendation.model]);
-        const modelId = entry ? entry.id : null;
-        if (modelId && modelSelect.value !== modelId) {
-          modelSelect.value = modelId;
-          console.log(`自动选择推荐模型: ${deviceInfo.recommendation.model}`);
-        }
-      }
+      const nameToKey = {
+        'Qwen2.5-1.5B': 'qwen25',
+        'Phi-3.5 Mini': 'phi35',
+        'SmolLM2-1.7B': 'smollm',
+      };
+      const entry = OfflineLLM.resolveModel(nameToKey[deviceInfo.recommendation.model]);
+      const recommendedEl = el.querySelector('.recommended-model');
+      if (recommendedEl && entry) recommendedEl.dataset.modelId = entry.id;
     }
-    
+
   } catch (error) {
     console.error('设备信息检测失败:', error);
     // 错误消息可能来自外部，用 textContent 写入避免注入
