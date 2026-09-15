@@ -111,4 +111,58 @@ r.check(recNames.size > 0, `device-detection 产出 ${recNames.size} 个推荐�
 const unmapped = [...recNames].filter((n) => !pairs.some((p) => p.name === n));
 r.check(unmapped.length === 0, `每个推荐名都有 nameToKey 映射（缺失：${unmapped.join(',') || '无'}）`);
 
+// ---- F. 设备自适应推荐：端到端标到卡片上（新增护栏）----
+// §C/§E 只保证「推荐名 ↔ 短键 ↔ 卡片展示名」的数据对齐；本段保证这条链路真的作用到 UI
+// （设备算出推荐 → nameToKey 映射 → resolveModel → 卡片标出「本机推荐」），
+// 防止「检测了设备、算出推荐、然后把结果丢掉」这类静默失效回归。
+r.section('F. 设备推荐标出卡片（端到端）');
+const recDi = (model) => ({
+  memory: 8, cpuCores: 8, gpuSupport: true, gpu: 'WebGPU',
+  screen: { width: 1440, height: 900 },
+  recommendation: { model, deviceType: 'desktop', warnings: [], suggestions: [] },
+});
+const REC = [
+  ['Qwen2.5-1.5B', 'onnx-community/Qwen2.5-1.5B-Instruct'],
+  ['Phi-3.5 Mini', 'onnx-community/Phi-3.5-mini-instruct-onnx-web'],
+  ['SmolLM2-1.7B', 'HuggingFaceTB/SmolLM2-1.7B-Instruct'],
+];
+for (const [name, id] of REC) {
+  const e = makeEnv({ globals: { DeviceDetector: { detectDevice: async () => recDi(name) } } });
+  e.run('js/offline-llm.js');
+  e.run('js/offline-ui.js');
+  e.el('model-cards');
+  e.el('device-info');
+  e.eval('renderModelCards()');
+  await e.eval('renderDeviceInfo()');
+  const got = e.eval(`(() => {
+    const box = document.getElementById('model-cards');
+    const cards = box.querySelectorAll('.offline-model-card');
+    return {
+      total: cards.length,
+      marked: cards.filter((c) => c.classList.contains('device-recommended')).map((c) => c.getAttribute('data-model-id')).join(','),
+      badge: ((box.querySelector('[data-model-id="${id}"] .offline-model-device-badge')) || {}).textContent || '',
+    };
+  })()`);
+  r.eq(got.total, 3, `${name}: 渲染出 3 张模型卡片`);
+  r.eq(got.marked, id, `${name}: 恰好标出对应的那张卡片`);
+  r.eq(got.badge, '本机推荐', `${name}: 标出项带「本机推荐」徽章`);
+}
+{
+  const e = makeEnv({ globals: { DeviceDetector: { detectDevice: async () => recDi('Not-A-Model') } } });
+  e.run('js/offline-llm.js');
+  e.run('js/offline-ui.js');
+  e.el('model-cards');
+  e.el('device-info');
+  e.eval('renderModelCards()');
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (...a) => warns.push(a.join(' '));
+  let threw = false;
+  try { await e.eval('renderDeviceInfo()'); } catch { threw = true; }
+  console.warn = origWarn;
+  r.check(!threw, '未匹配推荐名：renderDeviceInfo 不抛异常');
+  r.check(warns.some((w) => w.includes('无法映射')), '未匹配推荐名：触发 console.warn');
+  r.eq(e.eval(`document.getElementById('model-cards').querySelectorAll('.offline-model-card').filter((c) => c.classList.contains('device-recommended')).length`), 0, '未匹配推荐名：不误标任何卡片');
+}
+
 r.done();

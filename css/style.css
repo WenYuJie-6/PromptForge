@@ -304,6 +304,9 @@ select option{background:var(--s2)}
 .offline-model-status{font-size:.65rem;padding:.15rem .4rem;border-radius:99px;background:var(--accent);color:var(--bg);font-family:var(--font-display)}
 .offline-model-desc{font-size:.78rem;color:var(--text2);line-height:1.4;margin-bottom:.25rem}
 .offline-model-size{font-size:.72rem;color:var(--text3)}
+/* 设备自适应推荐：按当前机器硬件推荐（区分于 MODEL_OPTIONS 的静态「推荐」徽章：绿色=官方，蓝色=按你的设备） */
+.offline-model-card.device-recommended{border-color:var(--info)}
+.offline-model-device-badge{font-size:.65rem;padding:.15rem .4rem;border-radius:99px;background:rgba(59,130,246,.12);color:var(--info);font-family:var(--font-display)}
 
 .offline-model-actions{display:flex;flex-direction:column;gap:.3rem}
 .offline-model-actions .btn{margin:0}

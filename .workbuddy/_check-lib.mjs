@@ -93,6 +93,10 @@ function parseHTML(html, doc) {
     if (cls) { node.className = cls; cls.split(/\s+/).filter(Boolean).forEach((c) => node.classList.add(c)); }
     const idv = attrVal('id');
     if (idv) { node.id = idv; doc.__ids.set(idv, node); }
+    // 记录全部属性（含 data-*），供 getAttribute() 与属性选择器 [a="b"] 使用
+    for (const am of attrs.matchAll(/([a-zA-Z_:][-\w:.]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/g)) {
+      node.setAttribute(am[1], am[3] ?? am[4] ?? am[5] ?? '');
+    }
     // 内联事件属性原样留存，便于断言「外部载荷未被当作 HTML 解析出可执行属性」
     for (const name of ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus']) {
       const v = attrVal(name);
@@ -202,6 +206,13 @@ function queryAll(scopeNode, sel) {
 function matchSimple(el, part) {
   if (part.startsWith('#')) return el.id === part.slice(1);
   if (part.startsWith('.')) return String(el.className).split(/\s+/).includes(part.slice(1)) || el.classList.contains(part.slice(1));
+  // 属性选择器 [attr] / [attr="值"]（支持 data-*，供「按数据钩子定位元素」这类断言使用）
+  const am = part.match(/^\[([a-zA-Z_:][-\w:.]*)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]+)))?\]$/);
+  if (am) {
+    const v = el.getAttribute(am[1]);
+    const want = am[2] !== undefined ? am[2] : (am[3] !== undefined ? am[3] : am[4]);
+    return want === undefined ? v !== null : v === want;
+  }
   return el.tagName === part.toUpperCase();
 }
 

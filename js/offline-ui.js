@@ -55,9 +55,8 @@ async function renderDeviceInfo() {
 
     // 推荐模型「展示名 → 短键」薄映射：这是「推荐名 ↔ 短键」的唯一对齐点，
     // 由 check-model-metadata §E 守护（键集合须等于模型卡片展示名集合、值须能被 resolveModel 解析）。
-    // 旧版据此回填已废弃的 #set-local-model 下拉框；该控件已被 #model-cards 取代，模型卡片
-    // 已用 MODEL_OPTIONS.recommended 显示「推荐」徽章。故此处只做一次运行时自检：
-    // 映射对不上时告警，避免「自动选择推荐模型」静默失效（不写任何无人消费的 DOM 属性）。
+    // 设备检测算出的推荐模型此前被丢弃（旧版只回填早已不存在的 #set-local-model 下拉框）；
+    // 这里按 data-model-id 在模型卡片区定位到对应卡片，标出「本机推荐」，让推荐真正可见。
     if (deviceInfo.recommendation.model) {
       const nameToKey = {
         'Qwen2.5-1.5B': 'qwen25',
@@ -65,7 +64,22 @@ async function renderDeviceInfo() {
         'SmolLM2-1.7B': 'smollm',
       };
       const entry = OfflineLLM.resolveModel(nameToKey[deviceInfo.recommendation.model]);
-      if (!entry) console.warn('设备推荐模型无法映射到模型清单：' + deviceInfo.recommendation.model);
+      if (!entry) {
+        // 映射失效（推荐名不在 nameToKey 里）：不抛异常，仅告警，避免「本机推荐」静默消失。
+        console.warn('设备推荐模型无法映射到模型清单：' + deviceInfo.recommendation.model);
+      } else {
+        const cardsBox = document.getElementById('model-cards');
+        const card = cardsBox ? cardsBox.querySelector('[data-model-id="' + entry.id + '"]') : null;
+        if (card) {
+          card.classList.add('device-recommended');
+          if (!card.querySelector('.offline-model-device-badge')) { // 幂等：避免重复插入徽章
+            const badge = document.createElement('span');
+            badge.className = 'offline-model-device-badge';
+            badge.textContent = '本机推荐';
+            (card.querySelector('.offline-model-title') || card).appendChild(badge);
+          }
+        }
+      }
     }
 
   } catch (error) {
@@ -106,7 +120,7 @@ function renderModelCards() {
     const isSelected = currentModel === m.id;
     const isLoaded = OfflineLLM.getCurrentModel() === m.id;
     return `
-      <div class="offline-model-card ${isLoaded ? 'loaded' : ''}">
+      <div class="offline-model-card ${isLoaded ? 'loaded' : ''}" data-model-id="${m.id}">
         <div class="offline-model-info">
           <div class="offline-model-title">
             <span class="offline-model-name">${m.name}</span>
