@@ -80,35 +80,42 @@ const V = readJSON('version.json').version;
 const WV = readJSON('version.json').webVersion || V;
 P(`\n=== 更新链路端到端校验（当前源码 v${V}）===`);
 
-// ---- 场景 1：dist/version.json（网页端部署时客户端读到的清单）----
-P('\n【场景 1】客户端读 dist/version.json（网页端部署形态）');
-for (const [label, ver] of [['装的是 0.1.4', '0.1.4'], ['装的是 0.1.0', '0.1.0'], ['装的是当前版', V]]) {
-  const m = manifestFromValue(readJSON('dist/version.json'));
-  if (!m) { assert(false, `${label} → 读不到清单`); continue; }
-  const r = checkUpdate(m, ver, ver, resolve(root, 'dist'), '');
-  const expectUpdate = cmp(parseV(ver), parseV(V)) < 0;
-  if (expectUpdate) {
-    assert(r.kind === 'app', `${label} → 应提示完整更新`, `kind=${r.kind} file=${r.file}`);
-    assert(!!r.file && existsSync(resolve(root, 'dist', r.file)), `${label} → 安装包在 dist/ 下存在`);
-  } else {
-    assert(r.kind === null, `${label} → 正确判定已最新`, r.reason || '');
+// ---- 场景 1 / 场景 2：双版本轴（app=version / web=webVersion）----
+// 用例是三元素 [label, curApp, curWeb]，期望同时考虑两条轴（与 checkUpdate 复刻逻辑一一对应）：
+//   · curApp < V       → 期望 kind==='app'（重装安装包）
+//   · 否则 curWeb < WV → 期望 kind==='web'（前端热更新，无需重装）
+//   · 否则             → 期望 kind===null（两轴都不落后，确实已最新）
+// 历史缺陷：旧用例只传单轴（curApp==curWeb），把「app 已最新、仅前端落后」错判成「已最新」，
+// 导致纯前端改动永远推不下去。这里在 dist / release 两个上下文都显式覆盖第二条轴。
+const AXIS_CASES = [
+  ['装的是 0.1.4', '0.1.4', '0.1.4'],   // app 落后 → 完整更新
+  ['装的是 0.1.0', '0.1.0', '0.1.0'],   // app 落后 → 完整更新
+  ['app 当前但前端落后', V, '0.1.0'],    // 仅 web 落后 → 热更新
+  ['两轴都最新', V, WV],                 // 两轴都不落后 → 已最新
+];
+function runAxisScenarios(title, dirRel) {
+  P(`\n【${title}】`);
+  const dir = resolve(root, dirRel);
+  const m = manifestFromValue(readJSON(join(dirRel, 'version.json')));
+  if (!m) { assert(false, `${dirRel}/version.json → 读不到清单`); return; }
+  for (const [label, curApp, curWeb] of AXIS_CASES) {
+    const r = checkUpdate(m, curApp, curWeb, dir, '');
+    const appBehind = cmp(parseV(curApp), parseV(V)) < 0;
+    const webBehind = cmp(parseV(curWeb), parseV(WV)) < 0;
+    if (appBehind) {
+      assert(r.kind === 'app', `${label} → 应提示完整更新（app ${curApp} < ${V}）`, `kind=${r.kind} file=${r.file}`);
+      assert(!!r.file && existsSync(resolve(dir, r.file)), `${label} → 安装包在 ${dirRel}/ 下存在`);
+    } else if (webBehind) {
+      assert(r.kind === 'web', `${label} → 应提示前端热更新（web ${curWeb} < ${WV}；app ${curApp} 不落后）`, `kind=${r.kind} file=${r.file}`);
+      assert(r.file === `web-update-${WV}.json`, `${label} → 选中前端热更新包 web-update-${WV}.json`, r.file);
+      assert(!!r.file && existsSync(resolve(dir, r.file)), `${label} → 热更新包在 ${dirRel}/ 下存在`);
+    } else {
+      assert(r.kind === null, `${label} → 正确判定已最新`, r.reason || '');
+    }
   }
 }
-
-// ---- 场景 2：release/version.json（发布目录，直接部署 release/ 的形态）----
-P('\n【场景 2】客户端读 release/version.json（把 release/ 整个上传）');
-for (const [label, ver] of [['装的是 0.1.4', '0.1.4'], ['装的是当前版', V]]) {
-  const m = manifestFromValue(readJSON('release/version.json'));
-  if (!m) { assert(false, `${label} → 读不到清单`); continue; }
-  const r = checkUpdate(m, ver, ver, resolve(root, 'release'), '');
-  const expectUpdate = cmp(parseV(ver), parseV(V)) < 0;
-  if (expectUpdate) {
-    assert(r.kind === 'app', `${label} → 应提示完整更新`, `file=${r.file}`);
-    assert(!!r.file && existsSync(resolve(root, 'release', r.file)), `${label} → 安装包在 release/ 下存在`);
-  } else {
-    assert(r.kind === null, `${label} → 正确判定已最新`, r.reason || '');
-  }
-}
+runAxisScenarios('场景 1：客户端读 dist/version.json（网页端部署形态）', 'dist');
+runAxisScenarios('场景 2：客户端读 release/version.json（把 release/ 整个上传）', 'release');
 
 // ---- 场景 3：只有前端落后 → 热更新 ----
 P('\n【场景 3】程序已最新、只有前端落后 → 应走热更新');
