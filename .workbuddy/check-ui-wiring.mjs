@@ -115,7 +115,7 @@ r.check(legacyHits.length === 0,
 
 const refIds = new Set();
 for (const f of jsFiles()) {
-  for (const m of read(f).matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) refIds.add(m[1]);
+  for (const m of stripComments(read(f)).matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) refIds.add(m[1]);
 }
 r.check(refIds.size >= 60, `js/ 中字面量 id 引用 ${refIds.size} 个（>=60）`);
 const ghosts = [...refIds].filter((id) => !htmlIds.has(id)).sort();

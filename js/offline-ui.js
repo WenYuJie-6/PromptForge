@@ -53,10 +53,11 @@ async function renderDeviceInfo() {
     
     el.innerHTML = deviceHtml;
 
-    // 推荐模型「展示名 → 短键」薄映射：交给唯一数据源 OfflineLLM.MODEL_OPTIONS 解析，
-    // 模型清单本身不重复维护。旧版据此回填已废弃的 #set-local-model 下拉框；
-    // 该控件已被 #model-cards 取代，故改为把推荐模型的仓库全名标注到推荐项上（data-model-id），
-    // 供调试与后续扩展使用，且不再触碰任何已废弃控件。
+    // 推荐模型「展示名 → 短键」薄映射：这是「推荐名 ↔ 短键」的唯一对齐点，
+    // 由 check-model-metadata §E 守护（键集合须等于模型卡片展示名集合、值须能被 resolveModel 解析）。
+    // 旧版据此回填已废弃的 #set-local-model 下拉框；该控件已被 #model-cards 取代，模型卡片
+    // 已用 MODEL_OPTIONS.recommended 显示「推荐」徽章。故此处只做一次运行时自检：
+    // 映射对不上时告警，避免「自动选择推荐模型」静默失效（不写任何无人消费的 DOM 属性）。
     if (deviceInfo.recommendation.model) {
       const nameToKey = {
         'Qwen2.5-1.5B': 'qwen25',
@@ -64,8 +65,7 @@ async function renderDeviceInfo() {
         'SmolLM2-1.7B': 'smollm',
       };
       const entry = OfflineLLM.resolveModel(nameToKey[deviceInfo.recommendation.model]);
-      const recommendedEl = el.querySelector('.recommended-model');
-      if (recommendedEl && entry) recommendedEl.dataset.modelId = entry.id;
+      if (!entry) console.warn('设备推荐模型无法映射到模型清单：' + deviceInfo.recommendation.model);
     }
 
   } catch (error) {

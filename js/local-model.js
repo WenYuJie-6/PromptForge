@@ -407,13 +407,9 @@ function showDeviceInfo() {
   deviceInfo.innerHTML = info.join('<br>');
 }
 
-// 初始化离线模型（已移至 offline-ui.js）
-// 这个函数保留是为了向后兼容
-window.initOfflineModels = function() {
-  if (typeof window.onEngineChange === 'function') {
-    window.onEngineChange('offline');
-  }
-};
+// 说明：此处的 window.initOfflineModels 已删除 —— 它只是 onEngineChange('offline') 的薄包装，
+// 全仓无任何调用者（无内联 handler、无脚本引用），属死代码；本项目无插件机制，
+// 不构成对外扩展点。离线入口统一走 #set-engine 触发 onEngineChange()。
 
 // ============================================================
 // 本处原有 4 个全局函数已删除：downloadLocalModel / checkLocalMode /
