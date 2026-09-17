@@ -278,7 +278,12 @@ r.section('E. bump-web-version.mjs 执行级验证（临时副本）');
   try {
     mkdirSync(join(tmp, 'scripts'), { recursive: true });
     copyFileSync(P('scripts/bump-web-version.mjs'), join(tmp, 'scripts/bump-web-version.mjs'));
+    // 脚本现在还会把 sw.js 的 CACHE_NAME / API_CACHE_NAME 跟随 webVersion 改写
+    // （结构性 bust 网页端缓存，见 scripts/sw-cache.mjs），故 fixture 必须一并提供依赖：
+    // 共享助手 sw-cache.mjs 与目标文件 sw.js。仅补 fixture，未改动任何断言。
+    copyFileSync(P('scripts/sw-cache.mjs'), join(tmp, 'scripts', 'sw-cache.mjs'));
     copyFileSync(P('version.json'), join(tmp, 'version.json'));
+    copyFileSync(P('sw.js'), join(tmp, 'sw.js'));
 
     const before = JSON.parse(readFileSync(join(tmp, 'version.json'), 'utf8'));
     const target = '9.9.9';

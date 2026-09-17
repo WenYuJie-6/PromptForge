@@ -16,6 +16,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncSwCache } from './sw-cache.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const next = process.argv[2];
@@ -31,6 +32,16 @@ const from = meta.webVersion || meta.version;
 const appVersion = meta.version;
 meta.webVersion = next;
 writeFileSync(versionPath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+
+// sw.js 的 CACHE_NAME / API_CACHE_NAME 与 webVersion 绑定：静态资源是缓存优先，
+// 不改这里网页端就永远吃旧缓存、拿不到新前端。改不到就报错退出，绝不静默跳过。
+try {
+  const sw = syncSwCache(root, next);
+  console.log(`[bump:web] sw.js 缓存名 CACHE_NAME ${sw.from} → ${next}${sw.changed ? '' : '（已是最新）'}`);
+} catch (e) {
+  console.error(`[bump:web] 同步 sw.js 缓存名失败：${e.message}`);
+  process.exit(1);
+}
 
 console.log(`[bump:web] version.json 前端版本 webVersion ${from} → ${next}`);
 console.log(`[bump:web] 程序版本 version 保持 ${appVersion} 不变（纯前端改动不需要重装）`);

@@ -16,6 +16,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncSwCache } from './sw-cache.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const next = process.argv[2];
@@ -34,6 +35,16 @@ meta.webVersion = next;
 writeFileSync(versionPath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
 console.log(`[bump] version.json 程序版本 ${from} → ${next}`);
 console.log(`[bump] version.json 前端版本 webVersion = ${next}（全量包内嵌前端即此版本，一并对齐）`);
+
+// 发全量包同样要 bust 网页端缓存：sw.js 的缓存名跟随 webVersion（发全量包时即本次版本）。
+// 改不到就报错退出，绝不静默跳过。
+try {
+  const sw = syncSwCache(root, next);
+  console.log(`[bump] sw.js 缓存名 CACHE_NAME ${sw.from} → ${next}${sw.changed ? '' : '（已是最新）'}`);
+} catch (e) {
+  console.error(`[bump] 同步 sw.js 缓存名失败：${e.message}`);
+  process.exit(1);
+}
 
 // 注意：不能用「替换前后是否相同」来判断「有没有找到字段」——
 // 目标值本来就等于当前值时，替换结果与原文一致，会被误报成"未找到版本号"，
