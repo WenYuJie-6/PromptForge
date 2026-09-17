@@ -1,6 +1,6 @@
 [package]
 name = "promptforge"
-version = "0.2.1"
+version = "0.2.3"
 description = "PromptForge 提示词工坊"
 authors = ["PromptForge"]
 license = "ISC"

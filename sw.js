@@ -6,8 +6,8 @@
 // 为什么必须跟随：静态资源（本文件 STATIC_PATHS 及**所有** .js/.css）走「缓存优先」，
 // 浏览器仅在 sw.js 字节变化时才重装 SW —— 改了前端却不改这里，网页端 PWA 用户会永远
 // 吃到旧缓存、拿不到新前端。请勿手工填任意值，也不要在别处写死这两个名字。
-const CACHE_NAME = 'promptforge-v0.2.2';
-const API_CACHE_NAME = 'promptforge-api-v0.2.2';
+const CACHE_NAME = 'promptforge-v0.2.3';
+const API_CACHE_NAME = 'promptforge-api-v0.2.3';
 
 // 缓存的静态资源
 // 必须用相对路径：若写成绝对路径，部署在子目录（如 /promptforge/）时

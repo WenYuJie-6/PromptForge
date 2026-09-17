@@ -1,6 +1,6 @@
 {
   "name": "promptforge",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "PromptForge 提示词工坊 - 把你的想法交给 AI，生成结构化高质量提示词",
   "private": true,
   "scripts": {
