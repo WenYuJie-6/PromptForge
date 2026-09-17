@@ -248,6 +248,16 @@ r.check(atBuild >= 0, 'CI 执行 `node scripts/tauri-build.mjs`');
 r.check(atSync >= 0 && atBuild >= 0 && atSync < atBuild,
   'sync:dist 早于 tauri-build（P0-1：dist-app 是 cargo 编译期依赖）');
 r.check(/verify-update-chain\.mjs/.test(wf), 'CI 末段跑 verify-update-chain');
+// 「断言存在却没人执行」是与更新链路同源的缺口：CI 必须真的跑 .workbuddy/run-all-checks.mjs
+// （约 680 项断言的总闸，含 check-sw-cache 等新增护栏），否则全靠开发者本机自觉。
+r.check(/run:\s*node\s+\.workbuddy\/run-all-checks\.mjs/.test(wf),
+  'CI 运行 .workbuddy/run-all-checks.mjs（全部套件，而非只跑 verify-update-chain）');
+{
+  const atAllChecks = wf.indexOf('.workbuddy/run-all-checks.mjs');
+  const atBuildRelease = wf.indexOf('Build release package');
+  r.check(atAllChecks >= 0 && atBuildRelease >= 0 && atAllChecks > atBuildRelease,
+    'run-all-checks 位于 Build release package 之后（其内 verify-update-chain 需要 release/ 产物，过早在 CI 上假红）');
+}
 
 // P1-3 回归护栏：仓库名来源与大小写
 r.check(/GITHUB_REPOSITORY/.test(wf), 'CI 用 GITHUB_REPOSITORY 推导仓库名（workflow_dispatch 下也可靠）');

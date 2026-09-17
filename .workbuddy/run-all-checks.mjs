@@ -12,6 +12,7 @@ const suites = [
   ['check-update-chain', '.workbuddy/check-update-chain.mjs'],
   ['check-runtime-info', '.workbuddy/check-runtime-info.mjs'],
   ['check-sw-cache', '.workbuddy/check-sw-cache.mjs'],
+  ['check-suite-registry', '.workbuddy/check-suite-registry.mjs'],
   ['check-model-metadata', '.workbuddy/check-model-metadata.mjs'],
   ['check-model-derivation', '.workbuddy/check-model-derivation.mjs'],
   ['check-settings-cache', '.workbuddy/check-settings-cache.mjs'],

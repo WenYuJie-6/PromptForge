@@ -97,6 +97,12 @@ jobs:
       - name: Verify update chain
         run: node scripts/verify-update-chain.mjs
 
+      # 全部 .workbuddy 套件（约 680+ 断言）的总闸。必须放在 Build release package 与
+      # Sync dist 之后：其内的 verify-update-chain 依赖 release/ 产物，放太早会在 CI 上假红。
+      # 保留上面的 Verify update chain 步骤（它被既有断言钉着），此处并存（少量重复，换零回归）。
+      - name: Run all guard suites (run-all-checks)
+        run: node .workbuddy/run-all-checks.mjs
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
