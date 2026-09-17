@@ -13,6 +13,13 @@ use tauri::utils::assets::AssetKey;
 /// 无退出热更新状态：指向当前生效的前端资源目录（None = 使用内嵌资源）
 struct AppState {
   web_root: Arc<RwLock<Option<PathBuf>>>,
+  /// 本次实际监听的服务端口。
+  ///
+  /// 启动时由 `bind_fixed_port()` 在 14370..14390 里取首个空闲端口（全占用才退化为
+  /// 系统随机端口），因此**不同次启动端口可能不同**；绿色版启动器又用同一端口段，
+  /// 两者会互相挤占，端口更不可预测。把它托管进状态，供 `get_runtime_info` 命令读取、
+  /// 展示给用户 —— 这正是本次要解决的问题：用户反馈"找不到软件版所在的端口"。
+  serve_port: u16,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,6 +49,7 @@ pub fn run() {
   tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![
       get_version,
+      get_runtime_info,
       check_update,
       download_update,
       install_update,
@@ -62,19 +70,28 @@ pub fn run() {
         )?;
       }
 
-      app.manage(AppState {
-        web_root: web_root.clone(),
-      });
-
       // Windows 下部分机器上 WebView2 对 http://tauri.localhost 的自定义协议拦截
       // 可能失效（表现为 DNS 解析错误页白屏乱码），这里改为内嵌静态服务器：
       // 直接监听 127.0.0.1 固定端口，把嵌入资源作为普通 HTTP 内容返回，
       // 完全不依赖 DNS 与自定义协议拦截。
+      //
+      // 端口只分配一次，随后同时用于两处：拼出窗口 URL（http://127.0.0.1:{port}/）
+      // 与写入 AppState.serve_port 供前端读取。二者必然一致 —— 界面显示的就是本窗口
+      // 实际所在的那个端口。注意端口必须在 manage 之前算出来，因此这里先 bind 再 manage。
       let listener = bind_fixed_port();
       let port = listener.local_addr().map(|a| a.port()).unwrap_or(14370);
       let server = tiny_http::Server::from_listener(listener, None).map_err(|e| {
         format!("静态资源服务器启动失败: {e}")
       })?;
+
+      // 托管状态：把本次实际监听的端口一并交给 AppState —— 端口此前只活在启动流程的
+      // 局部变量里，界面上任何地方都看不到它；提升为托管状态后，get_runtime_info 命令
+      // 可读取并展示给用户（端口不同次启动可能不同，必须实时取）。
+      app.manage(AppState {
+        web_root: web_root.clone(),
+        serve_port: port,
+      });
+
       thread::spawn(move || {
         serve_forever(server, assets, web_root);
       });
@@ -243,6 +260,37 @@ fn restore_web_root() -> Option<PathBuf> {
 #[tauri::command]
 fn get_version(app: tauri::AppHandle) -> String {
   app.package_info().version.to_string()
+}
+
+/// 运行时信息：把界面上"看不见"的三样东西一次给全 ——
+///   · app_version —— 当前程序版本（app 轴）
+///   · web_version —— 当前生效的前端资源版本（前端轴；热更新后会高于程序版本）
+///   · serve_port  —— 本次实际监听的本地服务端口（14370..14390 首个空闲，全占用才退随机）
+///
+/// 为什么需要它：用户反馈"找不到软件版所在的端口，也分不清桌面上装的是哪个版本"。
+/// 端口此前只活在启动流程的局部变量里，前端无从得知；这里从托管状态读出**真实**端口，
+/// 前端据此生成 http://127.0.0.1:{port}/ 展示给用户 —— 端口不写死，每次启动实时取。
+#[derive(serde::Serialize)]
+struct RuntimeInfo {
+  app_version: String,
+  web_version: String,
+  serve_port: u16,
+  is_desktop: bool,
+}
+
+#[tauri::command]
+fn get_runtime_info(app: tauri::AppHandle) -> Result<RuntimeInfo, String> {
+  let app_version = app.package_info().version.to_string();
+  let web_version = current_web_version(&app);
+  // 用 try_state 而非 state：万一状态缺失也返回 0 交给前端隐藏该行，绝不 panic。
+  let serve_port = app.try_state::<AppState>().map(|s| s.serve_port).unwrap_or(0);
+  Ok(RuntimeInfo {
+    app_version,
+    web_version,
+    serve_port,
+    // 本命令只可能由桌面端（Tauri 后端）执行；网页端根本调不到 invoke。
+    is_desktop: true,
+  })
 }
 
 // ============================================================

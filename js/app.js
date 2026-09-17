@@ -1738,6 +1738,73 @@ function openUpdateFolder() {
   tauriInvoke('open_update_folder').catch((e) => toast('打开失败：' + (e.message || e)));
 }
 
+// ============================================================
+// 运行时信息：把「当前程序版本 / 前端资源版本 / 本次实际服务端口」显示出来。
+//
+// 为什么需要它：用户反馈"找不到软件版所在的端口，也分不清桌面上装的是哪个版本"。
+// 桌面端静态服务端口由 Rust 侧在 14370..14390 里取首个空闲（全占用才退随机），
+// **不同次启动可能不同**，且绿色版启动器用同一端口段会互相挤占 —— 只能实时从后端读，
+// 不能写死。这里把后端返回的实际端口与两条版本轴一并展示，用户一眼即可确认。
+// ============================================================
+async function initRuntimeInfo() {
+  const badgeEl = document.getElementById('runtime-badge');
+  const portEl = document.getElementById('serve-port');
+  const portRow = document.getElementById('serve-port-row');
+
+  // 概要行必须始终有值：任何分支都经 setBadge 写入，读不到时回退占位 'v--'，
+  // 绝不出现 undefined / 空白。
+  const setBadge = (text) => { if (badgeEl) badgeEl.textContent = text || 'v--'; };
+
+  // 兜底版本号：从本页部署的 version.json 读（no-store 避免 Service Worker 返回旧缓存）。
+  // 读不到不影响展示：后续仍有后端返回与占位兜底。
+  let manifestApp = '';
+  let manifestWeb = '';
+  try {
+    const res = await fetch('version.json', { cache: 'no-store' });
+    const j = res && res.ok ? await res.json() : null;
+    if (j) {
+      manifestApp = String(j.version || '').trim();
+      manifestWeb = String(j.webVersion || j.version || '').trim();
+    }
+  } catch { /* 忽略：交给下面的后端/占位兜底 */ }
+
+  if (!isDesktopApp) {
+    // 网页端没有本地静态服务端口 → 隐藏服务地址行（该行只对桌面端有意义）
+    if (portRow) portRow.classList.add('hidden');
+    setBadge(manifestWeb ? 'v' + manifestWeb : 'v--');
+    return;
+  }
+
+  // 桌面端：向后端取实际运行信息 —— 端口来自 Rust 侧本次真实监听的端口，非硬编码
+  try {
+    const info = await tauriInvoke('get_runtime_info');
+    const appVer = String((info && info.app_version) || '').trim() || manifestApp;
+    const webVer = String((info && info.web_version) || '').trim() || manifestWeb || appVer;
+    const port = info && Number(info.serve_port) ? Number(info.serve_port) : 0;
+
+    // 概要行：形如 v0.2.1 · 前端 0.2.2 · :14370（端口读不到时省略该项，仍保证非空）
+    const parts = ['v' + (appVer || '--')];
+    parts.push('前端 ' + (webVer || appVer || '--'));
+    if (port) parts.push(':' + port);
+    setBadge(parts.join(' · '));
+
+    if (portEl && portRow) {
+      if (port) {
+        const url = 'http://127.0.0.1:' + port + '/';
+        portEl.textContent = url;
+        if (portEl.tagName === 'A') portEl.href = url;
+        portRow.classList.remove('hidden');
+      } else {
+        portRow.classList.add('hidden');
+      }
+    }
+  } catch {
+    // invoke 失败 / 超时：优雅降级，不要让全局错误兜底把异常弹给用户
+    if (portRow) portRow.classList.add('hidden');
+    setBadge(manifestWeb || manifestApp ? 'v' + (manifestWeb || manifestApp) : 'v--');
+  }
+}
+
 // 按运行平台显示/隐藏侧边栏菜单：
 // - 桌面端本身就是安装好的程序，「安装应用」毫无意义 → 隐藏
 // - 网页端没有客户端可更新，「检查更新」点了只会报"仅桌面版支持" → 隐藏
@@ -1950,6 +2017,9 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // 应用内更新（桌面版自动检查）
   initUpdateSection();
+
+  // 运行时信息：程序版本 / 前端资源版本 / 本次实际服务端口（用户不必再猜端口与版本）
+  initRuntimeInfo();
 
   // 内置在线服务：拉一次配置，让没配 API 的新装用户也能直接联网用
   initBuiltinService();

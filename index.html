@@ -47,6 +47,10 @@
       <button class="fw-chip" data-fw="create">CREATE</button>
       <button class="fw-chip" data-fw="broke">BROKE</button>
     </div>
+
+    <!-- 侧栏底部版本概要：让用户一眼看清自己跑的是哪个版本（桌面端带本次实际端口）。
+         文本由 initRuntimeInfo() 填充，读不到时回退占位，绝不为空 —— 初始值即非空兜底。 -->
+    <div class="sidebar-version" id="runtime-badge" style="margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--border);font-size:.72rem;line-height:1.5;color:var(--text3);word-break:break-all">v--</div>
   </aside>
 
   <!-- Main Content -->
@@ -533,6 +537,7 @@
       <div class="help-section" id="help-update-section">
         <h3>六、软件更新（桌面版）</h3>
         <p>程序版本：<b class="mono" id="cur-version">--</b>　前端资源版本：<b class="mono" id="cur-web-version">--</b>　更新状态：<span id="upd-status">检查中...</span></p>
+        <p id="serve-port-row">本次服务地址：<a class="mono" id="serve-port" href="#" target="_blank" rel="noopener">--</a>　<span class="help-note">（可直接点开，或在浏览器地址栏粘贴访问本程序；仅桌面版有本地端口）</span></p>
         <p class="help-note" id="upd-notes" style="margin-top:.4rem"></p>
         <p class="help-note" id="upd-source-hint" style="margin-top:.4rem">更新源：检测中…</p>
         <p class="help-note">更新文件夹：<span class="mono" id="upd-dir">--</span></p>
